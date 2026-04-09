@@ -19,3 +19,6 @@ frontend/dist/
 
 # Claude
 .claude/
+nul
+projects_dump.json
+verify.json
