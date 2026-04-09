@@ -1,5 +1,6 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from collections import defaultdict
+import json
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -9,9 +10,6 @@ from ..core.database import get_db
 from ..core.security import get_current_user
 from ..models.user import User
 from ..models.project import ProjectInfo, ProjectStatus
-from ..models.bidding_info import BiddingInfo
-from ..models.bid_info import BidInfo, DepositStatus
-from ..models.bid_result import BidResult
 from ..models.organization import Organization
 
 router = APIRouter(prefix="/api/stats", tags=["统计分析"])
@@ -24,7 +22,7 @@ def get_overview(
 ):
     """Dashboard overview: status counts, monthly summary, upcoming deadlines, unreturned deposits."""
 
-    # --- status_counts: count projects grouped by status ---
+    # --- status_counts ---
     status_rows = (
         db.query(ProjectInfo.status, func.count(ProjectInfo.id))
         .group_by(ProjectInfo.status)
@@ -32,68 +30,64 @@ def get_overview(
     )
     status_counts = {}
     for status_val, count in status_rows:
-        # Enum values come back as their string value
         status_key = status_val.value if hasattr(status_val, "value") else str(status_val)
         status_counts[status_key] = count
 
-    # --- monthly_summary: bids and wins in current month ---
+    # --- monthly_summary: projects submitted/won/lost this month ---
     today = date.today()
     month_start = today.replace(day=1)
+    result_statuses = [ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost]
 
-    # Month bids: count BidResults created this month
-    month_bid_results = (
-        db.query(BidResult)
-        .filter(BidResult.created_at >= month_start)
+    month_projects = (
+        db.query(ProjectInfo)
+        .filter(
+            ProjectInfo.status.in_(result_statuses),
+            ProjectInfo.updated_at >= month_start,
+        )
         .all()
     )
-    month_bids = len(month_bid_results)
-    month_wins = sum(1 for r in month_bid_results if r.is_won)
+    month_bids = len(month_projects)
+    month_wins = sum(1 for p in month_projects if p.status == ProjectStatus.won)
     month_win_rate = round(month_wins / month_bids, 4) if month_bids > 0 else 0.0
 
-    # --- upcoming_deadlines: BiddingInfo where bid_deadline within 7 days and project is active ---
+    # --- upcoming_deadlines ---
     deadline_end = today + timedelta(days=7)
     active_statuses = [ProjectStatus.published, ProjectStatus.preparing]
 
-    upcoming_bidding_infos = (
-        db.query(BiddingInfo)
-        .join(ProjectInfo, BiddingInfo.project_id == ProjectInfo.id)
+    upcoming = (
+        db.query(ProjectInfo)
         .filter(
-            BiddingInfo.bid_deadline >= today,
-            BiddingInfo.bid_deadline <= deadline_end,
+            ProjectInfo.bid_deadline >= today,
+            ProjectInfo.bid_deadline <= deadline_end,
             ProjectInfo.status.in_(active_statuses),
         )
         .all()
     )
-    upcoming_deadlines = []
-    for bi in upcoming_bidding_infos:
-        project = db.query(ProjectInfo).filter(ProjectInfo.id == bi.project_id).first()
-        upcoming_deadlines.append({
-            "bidding_info_id": bi.id,
-            "project_id": bi.project_id,
-            "project_name": project.project_name if project else "",
-            "bid_deadline": str(bi.bid_deadline) if bi.bid_deadline else None,
-            "budget_amount": float(bi.budget_amount) if bi.budget_amount else 0,
-        })
+    upcoming_deadlines = [
+        {
+            "project_id": p.id,
+            "project_name": p.project_name,
+            "bid_deadline": str(p.bid_deadline) if p.bid_deadline else None,
+            "budget_amount": float(p.budget_amount) if p.budget_amount else 0,
+        }
+        for p in upcoming
+    ]
 
-    # --- deposit_not_returned: BidInfo where deposit_status is "未收回" ---
+    # --- deposit_not_returned ---
     deposit_not_returned_list = (
-        db.query(BidInfo)
-        .filter(BidInfo.deposit_status == DepositStatus.not_returned)
+        db.query(ProjectInfo)
+        .filter(ProjectInfo.deposit_status == "未收回")
         .all()
     )
-    deposit_not_returned = []
-    for bid in deposit_not_returned:
-        bidding_info = db.query(BiddingInfo).filter(BiddingInfo.id == bid.bidding_info_id).first()
-        project = (
-            db.query(ProjectInfo).filter(ProjectInfo.id == bidding_info.project_id).first()
-            if bidding_info else None
-        )
-        deposit_not_returned.append({
-            "bid_info_id": bid.id,
-            "project_name": project.project_name if project else "",
-            "deposit_amount": float(bid.deposit_amount) if bid.deposit_amount else 0,
-            "deposit_date": str(bid.deposit_date) if bid.deposit_date else None,
-        })
+    deposit_not_returned = [
+        {
+            "project_id": p.id,
+            "project_name": p.project_name,
+            "deposit_amount": float(p.deposit_amount) if p.deposit_amount else 0,
+            "deposit_date": str(p.deposit_date) if p.deposit_date else None,
+        }
+        for p in deposit_not_returned_list
+    ]
 
     return {
         "status_counts": status_counts,
@@ -110,52 +104,43 @@ def get_overview(
 @router.get("/win-rate")
 def get_win_rate(
     period: str = Query("month", description="统计周期: month/quarter/year"),
-    year: int = Query(None, description="年份, 不传则取全部"),
+    year: int = Query(None, description="年份"),
     bidding_type: str = Query(None, description="招标类型筛选"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Win rate statistics grouped by time period."""
-    query = db.query(BidResult)
+    query = db.query(ProjectInfo).filter(
+        ProjectInfo.status.in_([ProjectStatus.won, ProjectStatus.lost])
+    )
 
     if year is not None:
         query = query.filter(
-            BidResult.created_at >= date(year, 1, 1),
-            BidResult.created_at < date(year + 1, 1, 1),
+            ProjectInfo.updated_at >= date(year, 1, 1),
+            ProjectInfo.updated_at < date(year + 1, 1, 1),
         )
 
-    # If bidding_type filter is needed, join through BidInfo -> BiddingInfo -> ProjectInfo
     if bidding_type:
-        query = (
-            query
-            .join(BidInfo, BidResult.bid_info_id == BidInfo.id)
-            .join(BiddingInfo, BidInfo.bidding_info_id == BiddingInfo.id)
-            .join(ProjectInfo, BiddingInfo.project_id == ProjectInfo.id)
-            .filter(ProjectInfo.bidding_type == bidding_type)
-        )
+        query = query.filter(ProjectInfo.bidding_type == bidding_type)
 
-    results = query.all()
+    projects = query.all()
 
-    # Group results by period
     groups = defaultdict(lambda: {"total": 0, "wins": 0})
-
-    for r in results:
-        created = r.created_at
-        if created is None:
+    for p in projects:
+        updated = p.updated_at
+        if updated is None:
             continue
-
         if period == "month":
-            label = created.strftime("%Y-%m")
+            label = updated.strftime("%Y-%m")
         elif period == "quarter":
-            q = (created.month - 1) // 3 + 1
-            label = f"{created.year}-Q{q}"
+            q = (updated.month - 1) // 3 + 1
+            label = f"{updated.year}-Q{q}"
         elif period == "year":
-            label = str(created.year)
+            label = str(updated.year)
         else:
-            label = created.strftime("%Y-%m")
-
+            label = updated.strftime("%Y-%m")
         groups[label]["total"] += 1
-        if r.is_won:
+        if p.status == ProjectStatus.won:
             groups[label]["wins"] += 1
 
     response = []
@@ -168,7 +153,6 @@ def get_win_rate(
             "wins": wins,
             "win_rate": round(wins / total, 4) if total > 0 else 0.0,
         })
-
     return response
 
 
@@ -177,42 +161,42 @@ def get_competitors(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Competitor analysis: encounter count and win rate per competitor organization."""
-    # Fetch all BidResults that have competitors data
-    results = db.query(BidResult).all()
+    """Competitor analysis from competitors JSON field."""
+    projects = db.query(ProjectInfo).filter(ProjectInfo.competitors.isnot(None)).all()
 
-    # Collect all unique org_ids from competitors JSON
     org_ids = set()
-    competitor_records = []  # list of (result, competitor_list)
+    competitor_records = []
 
-    for r in results:
-        competitors = r.competitors
-        if not competitors or not isinstance(competitors, list):
+    for p in projects:
+        competitors = p.competitors
+        if not competitors:
             continue
-        competitor_records.append((r, competitors))
+        if isinstance(competitors, str):
+            try:
+                competitors = json.loads(competitors)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if not isinstance(competitors, list):
+            continue
+        competitor_records.append((p, competitors))
         for comp in competitors:
             if isinstance(comp, dict) and "org_id" in comp:
                 org_ids.add(comp["org_id"])
 
-    # Batch fetch organization names
     org_map = {}
     if org_ids:
         orgs = db.query(Organization).filter(Organization.id.in_(org_ids)).all()
         for org in orgs:
             org_map[org.id] = org.name
 
-    # Build stats per competitor
     stats = defaultdict(lambda: {"encounter_count": 0, "win_count": 0})
-
-    for r, competitors in competitor_records:
+    for p, competitors in competitor_records:
         for comp in competitors:
             if not isinstance(comp, dict) or "org_id" not in comp:
                 continue
             org_id = comp["org_id"]
             stats[org_id]["encounter_count"] += 1
-            # If we lost (is_won=False), the competitor might have won
-            # We count competitor "win" when our result is_won=False
-            if not r.is_won:
+            if not p.is_won:
                 stats[org_id]["win_count"] += 1
 
     response = []
@@ -226,8 +210,6 @@ def get_competitors(
             "win_count": win_count,
             "win_rate": round(win_count / encounter_count, 4) if encounter_count > 0 else 0.0,
         })
-
-    # Sort by encounter_count descending
     response.sort(key=lambda x: x["encounter_count"], reverse=True)
     return response
 
@@ -237,55 +219,37 @@ def get_deposits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Deposit tracking: all BidInfo with deposit info, enriched with project name and overdue calculation."""
-    # Query all BidInfo that have deposits
-    bid_infos = (
-        db.query(BidInfo)
-        .filter(BidInfo.has_deposit == True)  # noqa: E712
+    """Deposit tracking: all projects with has_deposit=True."""
+    projects = (
+        db.query(ProjectInfo)
+        .filter(ProjectInfo.has_deposit == True)  # noqa: E712
         .all()
     )
 
     today = date.today()
     response = []
-
-    for bid in bid_infos:
-        # Walk up the chain: BidInfo -> BiddingInfo -> ProjectInfo
-        bidding_info = (
-            db.query(BiddingInfo).filter(BiddingInfo.id == bid.bidding_info_id).first()
-        )
-        project = (
-            db.query(ProjectInfo).filter(ProjectInfo.id == bidding_info.project_id).first()
-            if bidding_info else None
-        )
-
-        # Also check BidResult for deposit_status
-        bid_result = (
-            db.query(BidResult).filter(BidResult.bid_info_id == bid.id).first()
-        )
-
+    for p in projects:
         deposit_status_value = (
-            bid_result.deposit_status.value
-            if bid_result and bid_result.deposit_status
-            else (bid.deposit_status.value if bid.deposit_status else "")
+            p.result_deposit_status.value
+            if p.result_deposit_status and hasattr(p.result_deposit_status, "value")
+            else (p.deposit_status.value if p.deposit_status and hasattr(p.deposit_status, "value") else "")
         )
 
-        # Calculate days overdue: if deposit_status is "未收回" and >30 days since bid_deadline
         days_overdue = 0
-        if deposit_status_value == "未收回" and bid.deposit_date:
-            days_since_deposit = (today - bid.deposit_date).days
+        if deposit_status_value == "未收回" and p.deposit_date:
+            days_since_deposit = (today - p.deposit_date).days
             if days_since_deposit > 30:
                 days_overdue = days_since_deposit - 30
 
         response.append({
-            "bid_info_id": bid.id,
-            "project_name": project.project_name if project else "",
-            "deposit_amount": float(bid.deposit_amount) if bid.deposit_amount else 0,
+            "project_id": p.id,
+            "project_name": p.project_name,
+            "deposit_amount": float(p.deposit_amount) if p.deposit_amount else 0,
             "deposit_status": deposit_status_value,
-            "deposit_date": str(bid.deposit_date) if bid.deposit_date else None,
-            "deposit_return_date": str(bid.deposit_return_date) if bid.deposit_return_date else None,
+            "deposit_date": str(p.deposit_date) if p.deposit_date else None,
+            "deposit_return_date": str(p.deposit_return_date) if p.deposit_return_date else None,
             "days_overdue": days_overdue,
         })
 
-    # Sort: unreturned deposits first, then by days_overdue descending
     response.sort(key=lambda x: (0 if x["deposit_status"] == "未收回" else 1, -x["days_overdue"]))
     return response

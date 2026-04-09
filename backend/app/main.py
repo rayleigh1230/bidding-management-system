@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .core.database import engine, Base
 
-app = FastAPI(title="招标信息管理系统", version="1.0.0")
+app = FastAPI(title="招标信息管理系统", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,7 +19,7 @@ def on_startup():
     # Import all models so Base knows about them
     from .models import (  # noqa: F401
         user, organization, platform, manager,
-        project, bidding_info, bid_info, bid_result, operation_log,
+        project, operation_log,
     )
     Base.metadata.create_all(bind=engine)
 
@@ -53,6 +53,7 @@ from .api.logs import router as logs_router
 from .api.organizations import router as orgs_router
 from .api.platforms import router as platforms_router
 from .api.managers import router as managers_router
+from .api.projects import router as projects_router
 
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -61,14 +62,4 @@ app.include_router(logs_router)
 app.include_router(orgs_router)
 app.include_router(platforms_router)
 app.include_router(managers_router)
-
-# Bidding management routers
-from .api.projects import router as projects_router
-from .api.bidding_infos import router as biddings_router
-from .api.bid_infos import router as bids_router
-from .api.bid_results import router as results_router
-
 app.include_router(projects_router)
-app.include_router(biddings_router)
-app.include_router(bids_router)
-app.include_router(results_router)

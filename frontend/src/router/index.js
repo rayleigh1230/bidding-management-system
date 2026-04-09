@@ -32,42 +32,6 @@ const routes = [
         meta: { title: '项目详情' },
       },
       {
-        path: 'biddings',
-        name: 'BiddingList',
-        component: () => import('../views/bidding/BiddingList.vue'),
-        meta: { title: '招标信息' },
-      },
-      {
-        path: 'biddings/:id',
-        name: 'BiddingDetail',
-        component: () => import('../views/bidding/BiddingDetail.vue'),
-        meta: { title: '招标详情' },
-      },
-      {
-        path: 'bids',
-        name: 'BidList',
-        component: () => import('../views/bid/BidList.vue'),
-        meta: { title: '投标信息' },
-      },
-      {
-        path: 'bids/:id',
-        name: 'BidDetail',
-        component: () => import('../views/bid/BidDetail.vue'),
-        meta: { title: '投标详情' },
-      },
-      {
-        path: 'results',
-        name: 'ResultList',
-        component: () => import('../views/result/ResultList.vue'),
-        meta: { title: '投标结果' },
-      },
-      {
-        path: 'results/:id',
-        name: 'ResultDetail',
-        component: () => import('../views/result/ResultDetail.vue'),
-        meta: { title: '结果详情' },
-      },
-      {
         path: 'statistics',
         name: 'Statistics',
         component: () => import('../views/stats/Statistics.vue'),

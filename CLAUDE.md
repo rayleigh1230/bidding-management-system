@@ -2,9 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 语言规则
+
+所有输出使用中文，除了代码、文件路径和技术术语（如变量名、API 路径、框架名称等）以外。
+
 ## Project Overview
 
-招标信息收集和投标信息管理系统 — internal tool for a small team (<5 people) to manage the full bidding lifecycle: 项目信息 → 招标信息 → 投标信息 → 投标结果. Each stage transition is driven by flow buttons that auto-create the next stage record and update project status.
+招标信息收集和投标信息管理系统 — internal tool for a small team (<5 people) to manage the full bidding lifecycle. All data is stored in a single `project_infos` table with ~50 columns divided into 4 logical sections. Each stage transition is driven by flow buttons that update the project status.
 
 ## Development Commands
 
@@ -30,56 +34,68 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 
 ### Backend Structure (`backend/app/`)
 - **`core/`** — config (pydantic-settings from `.env`), database (SQLAlchemy engine/session/Base), security (JWT via python-jose, bcrypt via passlib)
-- **`models/`** — SQLAlchemy 2.0 declarative models using `Mapped` + `mapped_column`. Each table in its own file. Enums defined alongside their models.
-- **`schemas/`** — Pydantic v2 models for request/response validation. `model_config = {"from_attributes": True}` for ORM mode.
-- **`api/`** — FastAPI routers, one file per resource. All routes require JWT auth via `Depends(get_current_user)`.
+- **`models/project.py`** — Single SQLAlchemy 2.0 model with all enums and ~50 columns. All bidding lifecycle data in one table.
+- **`schemas/project.py`** — Pydantic v2 models: `ProjectCreate`, `ProjectUpdate`, `ProjectResponse`. `model_config = {"from_attributes": True}` for ORM mode.
+- **`api/projects.py`** — Single FastAPI router for all CRUD + flow operations. Price calculation helpers (`_control_type_str`, `_format_price`, `_calc_winning_amount`, etc.) live here.
+- **`api/stats.py`** — Statistics endpoints, queries single `project_infos` table directly.
 - **`main.py`** — App factory: CORS middleware, startup event (auto-creates tables + default admin), route registration.
 
 ### Frontend Structure (`frontend/src/`)
-- **`api/`** — Axios-based API modules, one per backend resource. `index.js` is the shared Axios instance with JWT interceptor and 401 redirect.
+- **`api/project.js`** — Single Axios-based API module for all project operations (CRUD + flow).
 - **`components/`** — Shared components: `Layout.vue` (sidebar + header shell), `OrgSelector`/`PlatformSelector`/`ManagerSelector` (remote search + inline create), `RegionCascader` (省市区 picker).
-- **`views/`** — Page components organized by domain: `project/`, `bidding/`, `bid/`, `result/`, `admin/`, `stats/`.
+- **`views/project/`** — Two pages: `ProjectList.vue` (list with quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections).
 - **`stores/user.js`** — Pinia store for auth state (token + user in localStorage).
 - **`router/index.js`** — Vue Router with auth guard, lazy-loaded routes.
-- **`utils/region-data.js`** — China administrative division data (省/市/区).
 
-### Data Model Relationships
-```
-Organization ←── ProjectInfo.bidding_unit_id
-                       │
-                       ├── BiddingInfo.project_id (1:1)
-                       │        │
-                       │        └── BidInfo.bidding_info_id (1:1)
-                       │                 │
-                       │                 └── BidResult.bid_info_id (1:1)
-                       │
-Manager ←───── ProjectInfo.manager_ids (JSON array of IDs)
-Platform ←──── BiddingInfo.publish_platform_id
-User ←──────── ProjectInfo.created_by, BidInfo.created_by, BiddingInfo.bid_specialist_id
-```
+### Data Model (Single Table)
+
+`project_infos` table with 4 logical sections:
+
+| Section | Columns cover | Visible when |
+|---------|--------------|-------------|
+| 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, etc. | Always |
+| 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, etc. | status >= 已发公告 |
+| 投标信息 | partner_ids, bid_method, bid_status, deposit fields, our_price, etc. | status >= 准备投标 |
+| 投标结果 | competitors, scoring_details, is_won, winning_price/amount, contract fields, etc. | status >= 已投标 |
+
+**Field naming for merged columns:**
+- BiddingInfo.notes → `bidding_notes`
+- BidInfo.notes → `bid_notes`
+- BidResult.notes → `result_notes`
+- BidResult.deposit_status → `result_deposit_status`
+
+**All enums** (BiddingType, ProjectStatus, BudgetType, BidMethod, BidStatus, DepositStatus, ContractStatus, ResultDepositStatus) are defined in `models/project.py`.
 
 ### Core Business Flow (ProjectStatus enum)
 ```
-跟进中 →(publish)→ 已发公告 →(prepare)→ 准备投标 →(submit)→ 已投标 →(result)→ 已中标/未中标
+跟进中 →(publish)→ 已发公告 →(prepare)→ 准备投标 →(submit)→ 已投标 →(is_won update)→ 已中标/未中标
   └→(abandon)→ 已放弃 (any stage)
 ```
-Flow operations live in the API files (e.g., `POST /api/projects/{id}/publish` in `projects.py`). Each flow endpoint auto-creates the next-stage record and updates the project status.
+Flow endpoints only change the status field — no new records are created:
+- `POST /api/projects/{id}/publish` — 跟进中 → 已发公告
+- `POST /api/projects/{id}/prepare` — 已发公告 → 准备投标
+- `POST /api/projects/{id}/submit` — 准备投标 → 已投标 (+ deposit status transition)
+- `POST /api/projects/{id}/abandon` — any → 已放弃 (with reason)
+- `PUT /api/projects/{id}` with `is_won` field — 已投标 → 已中标/未中标 (auto-calculates winning_price/winning_amount)
 
 ### API Response Conventions
 - List endpoints return `{"items": [...], "total": N, "page": P, "page_size": S}`
-- Flow endpoints return `{"message": "...", "<entity>_id": N}` (e.g., `{"message": "发布公告成功", "bidding_info_id": 1}`)
+- Flow endpoints return `{"message": "..."}`
 - All endpoints use `model_dump(exclude_unset=True)` for partial updates
+- `enrich_project()` populates all related names and computed display fields
 
 ### Frontend-Backend Data Mapping
 - Frontend sends region as `JSON.stringify(["浙江省","杭州市","西湖区"])`, stored in `String(100)` column
 - JSON fields (`manager_ids`, `partner_ids`, `tags`, `competitors`, `scoring_details`) are stored as serialized JSON strings; frontend must `JSON.parse()` on read and send arrays on write
-- Flow buttons on detail pages call the flow endpoint then `router.push()` to the newly created entity
+- Frontend `collectSaveData()` only includes form fields from currently visible card sections to avoid sending irrelevant data (e.g., not sending `is_won` when result card isn't visible)
 
 ### Key Technical Notes
 - **bcrypt**: Must pin `bcrypt==4.1.3`. Version 5.x is incompatible with `passlib 1.7.4` (causes `__about__` AttributeError and wrap bug ValueError).
 - **JWT subject**: `sub` claim must be a string (`str(user.id)`), not an integer — `python-jose` validates this strictly.
-- **JSON fields**: `manager_ids`, `partner_ids`, `tags`, `competitors`, `scoring_details`, `bid_documents`, `bid_files` are stored as JSON columns. Some use SQLAlchemy `JSON` type, others use `String` with serialized JSON. Always check the model definition before assuming which format is used.
-- **Enriched responses**: List/detail endpoints return joined data (e.g., `project_name`, `bidding_unit_name`, `manager_names`) populated by `enrich_*()` helper functions in the API files, not via SQLAlchemy relationships.
+- **JSON fields**: `manager_ids`, `partner_ids`, `tags`, `competitors`, `scoring_details`, `bid_documents`, `bid_files` are stored as JSON columns using SQLAlchemy `JSON` type.
+- **Price calculation**: `_control_type_str()` handles Python 3.13 enum str() issue (returns enum member like `BudgetType.discount_rate` instead of value). Always use this helper instead of raw comparison.
+- **Winning amount formula**: 折扣率: `our_price / upper * budget`. 下浮率: `(1 - our_price/100) / (1 - upper/100) * budget`. 金额: `our_price` directly.
+- **Status guard**: Backend only allows is_won → status change when current status is "已投标", preventing premature status changes from partial saves.
 - **No tests**: The project has no test suite.
 
 ## Design Document

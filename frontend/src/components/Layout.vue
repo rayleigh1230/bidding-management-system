@@ -16,28 +16,15 @@
           <span>工作台</span>
         </el-menu-item>
 
-        <el-sub-menu index="business">
-          <template #title>
-            <el-icon><Briefcase /></el-icon>
-            <span>业务管理</span>
-          </template>
-          <el-menu-item index="/projects">
-            <el-icon><Document /></el-icon>
-            <span>项目管理</span>
-          </el-menu-item>
-          <el-menu-item index="/biddings">
-            <el-icon><Bell /></el-icon>
-            <span>招标信息</span>
-          </el-menu-item>
-          <el-menu-item index="/bids">
-            <el-icon><EditPen /></el-icon>
-            <span>投标信息</span>
-          </el-menu-item>
-          <el-menu-item index="/results">
-            <el-icon><Trophy /></el-icon>
-            <span>投标结果</span>
-          </el-menu-item>
-        </el-sub-menu>
+        <el-menu-item index="/projects">
+          <el-icon><Document /></el-icon>
+          <span>项目管理</span>
+        </el-menu-item>
+
+        <el-menu-item index="/statistics">
+          <el-icon><TrendCharts /></el-icon>
+          <span>数据分析</span>
+        </el-menu-item>
 
         <el-sub-menu index="admin">
           <template #title>
@@ -61,11 +48,6 @@
             <span>用户管理</span>
           </el-menu-item>
         </el-sub-menu>
-
-        <el-menu-item index="/statistics">
-          <el-icon><TrendCharts /></el-icon>
-          <span>数据分析</span>
-        </el-menu-item>
 
         <el-menu-item index="/logs">
           <el-icon><Notebook /></el-icon>
@@ -104,9 +86,6 @@ const userStore = useUserStore()
 const activeMenu = computed(() => {
   const path = route.path
   if (path.startsWith('/projects')) return '/projects'
-  if (path.startsWith('/biddings')) return '/biddings'
-  if (path.startsWith('/bids')) return '/bids'
-  if (path.startsWith('/results')) return '/results'
   return path
 })
 

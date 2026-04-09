@@ -1,17 +1,19 @@
 <template>
   <div>
+    <!-- 快捷筛选按钮 -->
+    <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap">
+      <el-button :type="activeStatus === '' ? 'primary' : ''" @click="setStatus('')">全部</el-button>
+      <el-button :type="activeStatus === '跟进中' ? 'primary' : ''" @click="setStatus('跟进中')">跟进中</el-button>
+      <el-button :type="activeStatus === '已发公告' ? 'primary' : ''" @click="setStatus('已发公告')">已发公告</el-button>
+      <el-button :type="activeStatus === '准备投标' ? 'primary' : ''" @click="setStatus('准备投标')">准备投标</el-button>
+      <el-button :type="activeStatus === '已投标' ? 'primary' : ''" @click="setStatus('已投标')">已投标</el-button>
+      <el-button :type="activeStatus === '已中标' ? 'success' : ''" @click="setStatus('已中标')">已中标</el-button>
+      <el-button :type="activeStatus === '未中标' ? 'danger' : ''" @click="setStatus('未中标')">未中标</el-button>
+    </div>
+
     <div style="display: flex; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px">
       <div style="display: flex; gap: 8px; flex-wrap: wrap">
         <el-input v-model="filters.keyword" placeholder="搜索项目名称" clearable style="width: 200px" @clear="loadData" @keyup.enter="loadData" />
-        <el-select v-model="filters.status" placeholder="项目状态" clearable style="width: 140px" @change="loadData">
-          <el-option label="跟进中" value="跟进中" />
-          <el-option label="已发公告" value="已发公告" />
-          <el-option label="准备投标" value="准备投标" />
-          <el-option label="已投标" value="已投标" />
-          <el-option label="已中标" value="已中标" />
-          <el-option label="未中标" value="未中标" />
-          <el-option label="已放弃" value="已放弃" />
-        </el-select>
         <el-select v-model="filters.bidding_type" placeholder="招标类型" clearable style="width: 140px" @change="loadData">
           <el-option label="公开招标" value="公开招标" />
           <el-option label="邀请招标" value="邀请招标" />
@@ -39,6 +41,9 @@
         <template #default="{ row }">
           <el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag>
         </template>
+      </el-table-column>
+      <el-table-column label="我方报价" width="120">
+        <template #default="{ row }">{{ row.our_price_display || '-' }}</template>
       </el-table-column>
       <el-table-column prop="created_at" label="创建时间" width="170">
         <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
@@ -78,6 +83,7 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const activeStatus = ref('')
 
 const filters = reactive({ keyword: '', status: '', bidding_type: '' })
 
@@ -94,6 +100,13 @@ const statusMap = {
 function statusLabel(s) { return statusMap[s]?.label || s }
 function statusType(s) { return statusMap[s]?.type || 'info' }
 function formatTime(t) { return t ? t.replace('T', ' ').slice(0, 16) : '' }
+
+function setStatus(status) {
+  activeStatus.value = status
+  filters.status = status
+  page.value = 1
+  loadData()
+}
 
 async function loadData() {
   loading.value = true

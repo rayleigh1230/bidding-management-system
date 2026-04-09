@@ -24,6 +24,14 @@ export function publishProject(id) {
   return request.post(`/projects/${id}/publish`)
 }
 
+export function prepareProject(id) {
+  return request.post(`/projects/${id}/prepare`)
+}
+
+export function submitProject(id) {
+  return request.post(`/projects/${id}/submit`)
+}
+
 export function abandonProject(id, reason) {
   return request.post(`/projects/${id}/abandon`, { reason })
 }

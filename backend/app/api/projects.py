@@ -1,32 +1,118 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from ..core.database import get_db
 from ..core.security import get_current_user
-from ..models.project import ProjectInfo, ProjectStatus
-from ..models.bidding_info import BiddingInfo
+from ..models.project import (
+    ProjectInfo, ProjectStatus, BudgetType,
+    BidStatus, DepositStatus, ContractStatus, ResultDepositStatus,
+)
 from ..models.organization import Organization
 from ..models.manager import Manager
+from ..models.platform import Platform
+from ..models.user import User
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from ..services.logger import log_operation
 
 router = APIRouter(prefix="/api/projects", tags=["项目管理"])
 
 
+# ---- Price calculation helpers (moved from bid_results.py) ----
+
+def _control_type_str(raw) -> str:
+    """将数据库中的 control_price_type（枚举名或值）统一转为中文值。"""
+    if isinstance(raw, BudgetType):
+        return raw.value
+    s = str(raw)
+    for bt in BudgetType:
+        if s == bt.name or s == bt.value:
+            return bt.value
+    return "金额"
+
+
+def _format_price(value, control_type: str) -> str:
+    if value is None or float(value) == 0:
+        return "-"
+    v = float(value)
+    if control_type == "金额":
+        return f"¥{v:,.2f}"
+    elif control_type in ("折扣率", "下浮率"):
+        return f"{v}%"
+    return f"{v}"
+
+
+def _calc_winning_amount(price_value, control_type: str, control_upper, budget) -> float | None:
+    v = float(price_value) if price_value else 0
+    if v == 0:
+        return None
+    if control_type == "金额":
+        return round(v, 2)
+    upper = float(control_upper) if control_upper else 0
+    budget_f = float(budget) if budget else 0
+    if upper == 0 or budget_f == 0:
+        return None
+    if control_type == "折扣率":
+        return round(v / upper * budget_f, 2)
+    if control_type == "下浮率":
+        return round((1 - v / 100) / (1 - upper / 100) * budget_f, 2)
+    return None
+
+
+def _format_amount(value) -> str:
+    if value is None or float(value) == 0:
+        return "-"
+    return f"¥{float(value):,.2f}"
+
+
+def _enrich_winning_display(is_won, control_type, our_price, winning_price, winning_amount, control_upper, budget) -> dict:
+    def _has_value(v):
+        return v is not None and float(v) != 0
+
+    result = {}
+    if is_won:
+        if control_type == "金额":
+            result["winning_price_display"] = "-"
+            amount = winning_amount if _has_value(winning_amount) else our_price
+            result["winning_amount_display"] = _format_amount(amount)
+        else:
+            price = winning_price if _has_value(winning_price) else our_price
+            result["winning_price_display"] = _format_price(price, control_type)
+            if _has_value(winning_amount):
+                result["winning_amount_display"] = _format_amount(winning_amount)
+            else:
+                result["winning_amount_display"] = _format_amount(
+                    _calc_winning_amount(price, control_type, control_upper, budget)
+                )
+    else:
+        if control_type == "金额":
+            result["winning_price_display"] = "-"
+            result["winning_amount_display"] = _format_amount(winning_amount)
+        else:
+            result["winning_price_display"] = _format_price(winning_price, control_type)
+            if _has_value(winning_amount):
+                result["winning_amount_display"] = _format_amount(winning_amount)
+            else:
+                result["winning_amount_display"] = _format_amount(
+                    _calc_winning_amount(winning_price, control_type, control_upper, budget)
+                )
+    return result
+
+
+# ---- Enrich function ----
+
 def enrich_project(project: ProjectInfo, db: Session) -> dict:
-    """Enrich a project with bidding_unit_name and manager_names."""
+    """填充所有 enrich 字段：关联名称 + 价格计算显示"""
     data = ProjectResponse.model_validate(project).model_dump()
 
-    # Enrich bidding_unit_name
+    # bidding_unit_name
     if project.bidding_unit_id:
         org = db.query(Organization).filter(Organization.id == project.bidding_unit_id).first()
         data["bidding_unit_name"] = org.name if org else None
     else:
         data["bidding_unit_name"] = None
 
-    # Enrich manager_names
+    # manager_names
     manager_ids = project.manager_ids if project.manager_ids else []
     if isinstance(manager_ids, str):
         try:
@@ -40,8 +126,70 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     else:
         data["manager_names"] = []
 
+    # agency_name
+    if project.agency_id:
+        org = db.query(Organization).filter(Organization.id == project.agency_id).first()
+        data["agency_name"] = org.name if org else None
+    else:
+        data["agency_name"] = None
+
+    # platform_name
+    if project.publish_platform_id:
+        platform = db.query(Platform).filter(Platform.id == project.publish_platform_id).first()
+        data["platform_name"] = platform.name if platform else None
+    else:
+        data["platform_name"] = None
+
+    # specialist_name
+    if project.bid_specialist_id:
+        specialist = db.query(User).filter(User.id == project.bid_specialist_id).first()
+        data["specialist_name"] = specialist.display_name if specialist else None
+    else:
+        data["specialist_name"] = None
+
+    # partner_names
+    partner_ids = project.partner_ids if project.partner_ids else []
+    if isinstance(partner_ids, str):
+        try:
+            partner_ids = json.loads(partner_ids)
+        except (json.JSONDecodeError, TypeError):
+            partner_ids = []
+    if partner_ids:
+        partners = db.query(Organization).filter(Organization.id.in_(partner_ids)).all()
+        partner_map = {p.id: p.name for p in partners}
+        data["partner_names"] = [partner_map.get(pid) for pid in partner_ids if pid in partner_map]
+    else:
+        data["partner_names"] = []
+
+    # winning_org_name
+    if project.winning_org_id:
+        winning_org = db.query(Organization).filter(Organization.id == project.winning_org_id).first()
+        data["winning_org_name"] = winning_org.name if winning_org else None
+    else:
+        data["winning_org_name"] = None
+
+    # Price displays
+    control_type = _control_type_str(project.control_price_type)
+    our_price = float(project.our_price) if project.our_price else 0
+    data["our_price_display"] = _format_price(our_price, control_type)
+
+    display = _enrich_winning_display(
+        project.is_won, control_type, our_price,
+        project.winning_price, project.winning_amount,
+        project.control_price_upper, project.budget_amount,
+    )
+    data["winning_price_display"] = display["winning_price_display"]
+    data["winning_amount_display"] = display["winning_amount_display"]
+
     return data
 
+
+# ---- JSON list fields that need serialization ----
+
+_JSON_LIST_FIELDS = {"manager_ids", "tags", "bid_documents", "partner_ids", "bid_files", "competitors", "scoring_details"}
+
+
+# ---- Endpoints ----
 
 @router.get("", response_model=dict)
 def list_projects(
@@ -59,7 +207,12 @@ def list_projects(
     if keyword:
         query = query.filter(ProjectInfo.project_name.contains(keyword))
     if status:
-        query = query.filter(ProjectInfo.status == status)
+        try:
+            status_enum = ProjectStatus(status)
+        except ValueError:
+            status_enum = None
+        if status_enum:
+            query = query.filter(ProjectInfo.status == status_enum)
     if bidding_type:
         query = query.filter(ProjectInfo.bidding_type == bidding_type)
     if region:
@@ -134,9 +287,36 @@ def update_project(
         raise HTTPException(status_code=400, detail="没有需要更新的字段")
 
     for field, value in update_data.items():
-        if field == "manager_ids" and isinstance(value, list):
+        if field in _JSON_LIST_FIELDS and isinstance(value, list):
             value = json.dumps(value, ensure_ascii=False)
         setattr(project, field, value)
+
+    # Auto-calculate winning_price / winning_amount when is_won changes
+    # Only when project is in "已投标" status
+    if "is_won" in update_data and project.status == ProjectStatus.submitted:
+        control_type = _control_type_str(project.control_price_type)
+        our_price = float(project.our_price) if project.our_price else 0
+
+        if project.is_won:
+            # 已中标：winning_price 存我方折扣率/下浮率，winning_amount 自动计算
+            if control_type == "金额":
+                project.winning_price = None
+                project.winning_amount = our_price if our_price else None
+            elif control_type in ("折扣率", "下浮率"):
+                project.winning_price = our_price if our_price else None
+                project.winning_amount = _calc_winning_amount(
+                    our_price, control_type, project.control_price_upper, project.budget_amount
+                )
+            project.status = ProjectStatus.won
+        else:
+            # 未中标：winning_price 为对手折扣率/下浮率，winning_amount 自动计算
+            if control_type == "金额":
+                project.winning_price = None
+            elif control_type in ("折扣率", "下浮率"):
+                project.winning_amount = _calc_winning_amount(
+                    project.winning_price, control_type, project.control_price_upper, project.budget_amount
+                )
+            project.status = ProjectStatus.lost
 
     log_operation(db, current_user.id, "update", "project", project.id, f"更新项目: {project.project_name}")
     db.commit()
@@ -154,16 +334,13 @@ def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    # Check for linked BiddingInfo
-    linked_bidding = db.query(BiddingInfo).filter(BiddingInfo.project_id == project_id).first()
-    if linked_bidding:
-        raise HTTPException(status_code=400, detail="该项目已关联招标信息，无法删除")
-
     log_operation(db, current_user.id, "delete", "project", project.id, f"删除项目: {project.project_name}")
     db.delete(project)
     db.commit()
     return {"message": "删除成功"}
 
+
+# ---- Flow endpoints (status changes only, no record creation) ----
 
 @router.post("/{project_id}/publish", response_model=dict)
 def publish_project(
@@ -174,27 +351,54 @@ def publish_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.status != ProjectStatus.following:
+        raise HTTPException(status_code=400, detail="只有跟进中的项目才能发布公告")
 
-    # Check if BiddingInfo already exists for this project
-    existing = db.query(BiddingInfo).filter(BiddingInfo.project_id == project_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该项目已发布招标公告")
-
-    # Create empty BiddingInfo
-    bidding_info = BiddingInfo(project_id=project_id)
-    db.add(bidding_info)
-
-    # Update project status
     project.status = ProjectStatus.published
-
-    log_operation(db, current_user.id, "advance", "project", project.id, f"发布招标公告，项目: {project.project_name}")
+    log_operation(db, current_user.id, "advance", "project", project.id, f"发布招标公告: {project.project_name}")
     db.commit()
-    db.refresh(bidding_info)
+    return {"message": "发布成功"}
 
-    return {
-        "message": "发布成功",
-        "bidding_info_id": bidding_info.id,
-    }
+
+@router.post("/{project_id}/prepare", response_model=dict)
+def prepare_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.status != ProjectStatus.published:
+        raise HTTPException(status_code=400, detail="只有已发公告的项目才能准备投标")
+
+    project.status = ProjectStatus.preparing
+    log_operation(db, current_user.id, "advance", "project", project.id, f"准备投标: {project.project_name}")
+    db.commit()
+    return {"message": "准备投标成功"}
+
+
+@router.post("/{project_id}/submit", response_model=dict)
+def submit_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.status != ProjectStatus.preparing:
+        raise HTTPException(status_code=400, detail="只有准备投标的项目才能提交投标")
+
+    project.status = ProjectStatus.submitted
+
+    # Deposit status transition: 已缴纳 → 未收回
+    if project.has_deposit and project.deposit_status == DepositStatus.paid:
+        project.deposit_status = DepositStatus.not_returned
+
+    log_operation(db, current_user.id, "advance", "project", project.id, f"提交投标: {project.project_name}")
+    db.commit()
+    return {"message": "提交投标成功"}
 
 
 @router.post("/{project_id}/abandon", response_model=dict)
@@ -207,6 +411,8 @@ def abandon_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.status == ProjectStatus.abandoned:
+        raise HTTPException(status_code=400, detail="项目已放弃")
 
     project.status = ProjectStatus.abandoned
     if body and "reason" in body:
@@ -215,5 +421,4 @@ def abandon_project(
     reason = body.get("reason", "") if body else ""
     log_operation(db, current_user.id, "abandon", "project", project.id, f"放弃项目: {project.project_name}, 原因: {reason}")
     db.commit()
-    db.refresh(project)
     return {"message": "已放弃该项目"}
