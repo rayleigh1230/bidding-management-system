@@ -24,7 +24,7 @@ Swagger docs available at http://localhost:8000/docs after startup.
 ```bash
 cd frontend
 npm install
-npm run dev    # dev server, proxies /api to backend:8000 via vite.config.js
+npm run dev    # dev server, proxies /api to backend:8000 via vite.config.js, listens on 0.0.0.0 (LAN accessible)
 ```
 
 ### Database
@@ -43,7 +43,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 ### Frontend Structure (`frontend/src/`)
 - **`api/project.js`** — Single Axios-based API module for all project operations (CRUD + flow).
 - **`components/`** — Shared components: `Layout.vue` (sidebar + header shell), `OrgSelector`/`PlatformSelector`/`ManagerSelector` (remote search + inline create), `RegionCascader` (省市区 picker).
-- **`views/project/`** — Two pages: `ProjectList.vue` (list with quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections).
+- **`views/project/`** — Two pages: `ProjectList.vue` (list with custom column selector per-status config and quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections in 2x2 grid layout).
 - **`stores/user.js`** — Pinia store for auth state (token + user in localStorage).
 - **`router/index.js`** — Vue Router with auth guard, lazy-loaded routes.
 

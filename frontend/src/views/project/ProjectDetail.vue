@@ -9,246 +9,348 @@
       </el-page-header>
     </div>
 
-    <!-- Card 1: 项目基本信息 (always visible) -->
-    <el-card>
-      <template #header><span>项目基本信息</span></template>
-      <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="100px" style="max-width: 700px">
-        <el-form-item label="招标类型" prop="bidding_type">
-          <el-select v-model="projectForm.bidding_type" placeholder="请选择招标类型" :disabled="!isNew && !isFollowing">
-            <el-option label="公开招标" value="公开招标" />
-            <el-option label="邀请招标" value="邀请招标" />
-            <el-option label="中介超市" value="中介超市" />
-            <el-option label="入围分项" value="入围分项" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="项目名称" prop="project_name">
-          <el-input v-model="projectForm.project_name" :disabled="!isNew && !isFollowing" />
-        </el-form-item>
-        <el-form-item label="招标单位">
-          <OrgSelector v-model="projectForm.bidding_unit_id" :disabled="!isNew && !isFollowing" />
-        </el-form-item>
-        <el-form-item label="所属地区">
-          <RegionCascader v-model="projectForm.region" :disabled="!isNew && !isFollowing" />
-        </el-form-item>
-        <el-form-item label="项目负责人">
-          <ManagerSelector v-model="projectForm.manager_ids" :multiple="true" :disabled="!isNew && !isFollowing" />
-        </el-form-item>
-        <el-form-item label="项目描述">
-          <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!isNew && !isFollowing" />
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <!-- 田字布局：4个卡片 -->
+    <div class="detail-grid">
+      <!-- 左上：项目基本信息 (always visible) -->
+      <el-card>
+        <template #header><span>项目基本信息</span></template>
+        <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="100px">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="招标类型" prop="bidding_type">
+                <el-select v-model="projectForm.bidding_type" placeholder="请选择招标类型" :disabled="!isNew && !isFollowing" style="width: 100%">
+                  <el-option label="公开招标" value="公开招标" />
+                  <el-option label="邀请招标" value="邀请招标" />
+                  <el-option label="中介超市" value="中介超市" />
+                  <el-option label="入围分项" value="入围分项" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="所属地区">
+                <RegionCascader v-model="projectForm.region" :disabled="!isNew && !isFollowing" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="项目名称" prop="project_name">
+            <el-input v-model="projectForm.project_name" :disabled="!isNew && !isFollowing" />
+          </el-form-item>
+          <el-form-item label="招标单位">
+            <OrgSelector v-model="projectForm.bidding_unit_id" :disabled="!isNew && !isFollowing" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="项目负责人">
+            <ManagerSelector v-model="projectForm.manager_ids" :multiple="true" :disabled="!isNew && !isFollowing" style="width: 100%" />
+          </el-form-item>
+          <el-form-item label="项目描述">
+            <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!isNew && !isFollowing" />
+          </el-form-item>
+        </el-form>
+      </el-card>
 
-    <!-- Card 2: 招标信息 (status >= 已发公告) -->
-    <el-card v-if="showBidding" style="margin-top: 16px">
-      <template #header><span>招标信息</span></template>
-      <el-form :model="biddingForm" label-width="100px" style="max-width: 700px">
-        <el-form-item label="代理单位">
-          <OrgSelector v-model="biddingForm.agency_id" />
-        </el-form-item>
-        <el-form-item label="发布平台">
-          <PlatformSelector v-model="biddingForm.publish_platform_id" />
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="biddingForm.tags" multiple filterable allow-create default-first-option placeholder="输入标签">
-            <el-option v-for="tag in biddingForm.tags" :key="tag" :label="tag" :value="tag" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="报名截止">
-          <el-date-picker v-model="biddingForm.registration_deadline" type="date" value-format="YYYY-MM-DD" />
-        </el-form-item>
-        <el-form-item label="投标截止">
-          <el-date-picker v-model="biddingForm.bid_deadline" type="date" value-format="YYYY-MM-DD" />
-        </el-form-item>
-        <el-form-item label="预算金额">
-          <el-input-number v-model="biddingForm.budget_amount" :min="0" :precision="2" :controls="false" style="width: 200px" />
-          <span style="margin-left: 8px; color: #999">元</span>
-        </el-form-item>
-        <el-form-item label="控制价类型">
-          <el-select v-model="biddingForm.control_price_type">
-            <el-option label="金额" value="金额" />
-            <el-option label="折扣率" value="折扣率" />
-            <el-option label="下浮率" value="下浮率" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="控制价上限">
-          <el-input-number v-model="biddingForm.control_price_upper" :min="0" :precision="2" :controls="false" style="width: 200px" />
-          <span v-if="biddingForm.control_price_type !== '金额'" style="margin-left: 8px; color: #999">%</span>
-          <span v-else style="margin-left: 8px; color: #999">元</span>
-        </el-form-item>
-        <el-form-item label="控制价下限">
-          <el-input-number v-model="biddingForm.control_price_lower" :min="0" :precision="2" :controls="false" style="width: 200px" />
-          <span v-if="biddingForm.control_price_type !== '金额'" style="margin-left: 8px; color: #999">%</span>
-          <span v-else style="margin-left: 8px; color: #999">元</span>
-        </el-form-item>
-        <el-form-item label="资格预审">
-          <el-switch v-model="biddingForm.is_prequalification" />
-        </el-form-item>
-        <el-form-item label="投标专员">
-          <el-select v-model="biddingForm.bid_specialist_id" clearable filterable placeholder="选择投标专员">
-            <el-option v-for="u in users" :key="u.id" :label="u.display_name" :value="u.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="biddingForm.bidding_notes" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <!-- Card 3: 投标信息 (status >= 准备投标) -->
-    <el-card v-if="showBid" style="margin-top: 16px">
-      <template #header><span>投标信息</span></template>
-      <el-form :model="bidForm" label-width="100px" style="max-width: 700px">
-        <el-form-item label="合作单位">
-          <OrgSelector v-model="bidForm.partner_ids" :multiple="true" />
-        </el-form-item>
-        <el-form-item label="投标方式">
-          <el-select v-model="bidForm.bid_method">
-            <el-option label="独立" value="独立" />
-            <el-option label="联合体" value="联合体" />
-            <el-option label="配合" value="配合" />
-            <el-option label="陪标" value="陪标" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="投标状态">
-          <el-select v-model="bidForm.bid_status">
-            <el-option label="未报名" value="未报名" />
-            <el-option label="已报名" value="已报名" />
-            <el-option label="已投标" value="已投标" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="有保证金">
-          <el-switch v-model="bidForm.has_deposit" />
-        </el-form-item>
-        <template v-if="bidForm.has_deposit">
-          <el-form-item label="保证金状态">
-            <el-select v-model="bidForm.deposit_status">
-              <el-option label="无" value="无" />
-              <el-option label="未缴纳" value="未缴纳" />
-              <el-option label="已缴纳" value="已缴纳" />
-              <el-option label="未收回" value="未收回" />
-              <el-option label="已收回" value="已收回" />
+      <!-- 右上：招标信息 (status >= 已发公告) -->
+      <el-card v-if="showBidding">
+        <template #header><span>招标信息</span></template>
+        <el-form :model="biddingForm" label-width="100px">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="代理单位">
+                <OrgSelector v-model="biddingForm.agency_id" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="发布平台">
+                <PlatformSelector v-model="biddingForm.publish_platform_id" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="标签">
+            <el-select v-model="biddingForm.tags" multiple filterable allow-create default-first-option placeholder="输入标签" style="width: 100%">
+              <el-option v-for="tag in biddingForm.tags" :key="tag" :label="tag" :value="tag" />
             </el-select>
           </el-form-item>
-          <el-form-item label="保证金金额">
-            <el-input-number v-model="bidForm.deposit_amount" :min="0" :precision="2" :controls="false" style="width: 200px" />
-            <span style="margin-left: 8px; color: #999">元</span>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="报名截止">
+                <el-date-picker v-model="biddingForm.registration_deadline" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="投标截止">
+                <el-date-picker v-model="biddingForm.bid_deadline" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="预算金额">
+                <div style="display: flex; align-items: center; width: 100%">
+                  <el-input-number v-model="biddingForm.budget_amount" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                  <span style="margin-left: 4px; color: #999; white-space: nowrap">元</span>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="控制价类型">
+                <el-select v-model="biddingForm.control_price_type" style="width: 100%">
+                  <el-option label="金额" value="金额" />
+                  <el-option label="折扣率" value="折扣率" />
+                  <el-option label="下浮率" value="下浮率" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="控制价上限">
+                <div style="display: flex; align-items: center; width: 100%">
+                  <el-input-number v-model="biddingForm.control_price_upper" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                  <span style="margin-left: 4px; color: #999; white-space: nowrap">{{ biddingForm.control_price_type !== '金额' ? '%' : '元' }}</span>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="控制价下限">
+                <div style="display: flex; align-items: center; width: 100%">
+                  <el-input-number v-model="biddingForm.control_price_lower" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                  <span style="margin-left: 4px; color: #999; white-space: nowrap">{{ biddingForm.control_price_type !== '金额' ? '%' : '元' }}</span>
+                </div>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="资格预审">
+                <el-switch v-model="biddingForm.is_prequalification" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="投标专员">
+                <el-select v-model="biddingForm.bid_specialist_id" clearable filterable placeholder="选择投标专员" style="width: 100%">
+                  <el-option v-for="u in users" :key="u.id" :label="u.display_name" :value="u.id" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="备注">
+            <el-input v-model="biddingForm.bidding_notes" type="textarea" :rows="2" />
           </el-form-item>
-          <el-form-item label="缴纳日期">
-            <el-date-picker v-model="bidForm.deposit_date" type="date" value-format="YYYY-MM-DD" />
-          </el-form-item>
-          <el-form-item label="退回日期">
-            <el-date-picker v-model="bidForm.deposit_return_date" type="date" value-format="YYYY-MM-DD" />
-          </el-form-item>
-        </template>
-        <el-form-item label="我方报价">
-          <el-input-number v-model="bidForm.our_price" :min="0" :precision="2" :controls="false" style="width: 200px" />
-          <span v-if="biddingForm.control_price_type !== '金额'" style="margin-left: 8px; color: #999">%</span>
-          <span v-else style="margin-left: 8px; color: #999">元</span>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="bidForm.bid_notes" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-    </el-card>
+        </el-form>
+      </el-card>
 
-    <!-- Card 4: 投标结果 (status >= 已投标) -->
-    <el-card v-if="showResult" style="margin-top: 16px">
-      <template #header><span>投标结果</span></template>
-      <el-form :model="resultForm" label-width="110px" style="max-width: 800px">
-        <!-- 我方报价 (只读) -->
-        <el-form-item label="我方报价">
-          <span style="color: #409EFF; font-weight: bold">{{ project.our_price_display || '-' }}</span>
-        </el-form-item>
+      <!-- 左下：投标信息 (status >= 准备投标) -->
+      <el-card v-if="showBid">
+        <template #header><span>投标信息</span></template>
+        <el-form :model="bidForm" label-width="100px">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="合作单位">
+                <OrgSelector v-model="bidForm.partner_ids" :multiple="true" style="width: 100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="投标方式">
+                <el-select v-model="bidForm.bid_method" style="width: 100%">
+                  <el-option label="独立" value="独立" />
+                  <el-option label="联合体" value="联合体" />
+                  <el-option label="配合" value="配合" />
+                  <el-option label="陪标" value="陪标" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="投标状态">
+                <el-select v-model="bidForm.bid_status" style="width: 100%">
+                  <el-option label="未报名" value="未报名" />
+                  <el-option label="已报名" value="已报名" />
+                  <el-option label="已投标" value="已投标" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="有保证金">
+                <el-switch v-model="bidForm.has_deposit" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <template v-if="bidForm.has_deposit">
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="保证金状态">
+                  <el-select v-model="bidForm.deposit_status" style="width: 100%">
+                    <el-option label="无" value="无" />
+                    <el-option label="未缴纳" value="未缴纳" />
+                    <el-option label="已缴纳" value="已缴纳" />
+                    <el-option label="未收回" value="未收回" />
+                    <el-option label="已收回" value="已收回" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="保证金金额">
+                  <div style="display: flex; align-items: center; width: 100%">
+                    <el-input-number v-model="bidForm.deposit_amount" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                    <span style="margin-left: 4px; color: #999; white-space: nowrap">元</span>
+                  </div>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="缴纳日期">
+                  <el-date-picker v-model="bidForm.deposit_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="退回日期">
+                  <el-date-picker v-model="bidForm.deposit_return_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </template>
+          <el-form-item label="我方报价">
+            <div style="display: flex; align-items: center; width: 100%">
+              <el-input-number v-model="bidForm.our_price" :min="0" :precision="2" :controls="false" style="flex: 1" />
+              <span style="margin-left: 4px; color: #999; white-space: nowrap">{{ biddingForm.control_price_type !== '金额' ? '%' : '元' }}</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="bidForm.bid_notes" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+      </el-card>
 
-        <!-- 参标单位报价 -->
-        <el-form-item label="参标单位报价">
-          <div v-for="(comp, idx) in resultForm.competitors" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%">
-            <OrgSelector v-model="comp.org_id" style="flex: 1" />
-            <el-input-number v-model="comp.price" :min="0" :precision="2" :controls="false" placeholder="报价" style="width: 150px" />
-            <el-button type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
-          </div>
-          <el-button type="primary" link @click="resultForm.competitors.push({ org_id: null, price: 0 })">+ 添加参标单位</el-button>
-        </el-form-item>
+      <!-- 右下：投标结果 (status >= 已投标) -->
+      <el-card v-if="showResult">
+        <template #header><span>投标结果</span></template>
+        <el-form :model="resultForm" label-width="100px">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="我方报价">
+                <span style="color: #409EFF; font-weight: bold">{{ project.our_price_display || '-' }}</span>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="是否中标">
+                <el-radio-group v-model="resultForm.is_won">
+                  <el-radio :label="true">已中标</el-radio>
+                  <el-radio :label="false">未中标</el-radio>
+                </el-radio-group>
+              </el-form-item>
+            </el-col>
+          </el-row>
 
-        <!-- 评分情况 -->
-        <el-form-item label="评分情况">
-          <div v-for="(score, idx) in resultForm.scoring_details" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%">
-            <el-input v-model="score.name" placeholder="单位名称" style="flex: 1" />
-            <el-input-number v-model="score.score" :min="0" :controls="false" placeholder="分数" style="width: 120px" />
-            <el-button type="danger" link @click="resultForm.scoring_details.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
-          </div>
-          <el-button type="primary" link @click="resultForm.scoring_details.push({ name: '', score: 0 })">+ 添加评分记录</el-button>
-        </el-form-item>
+          <!-- 参标单位报价 -->
+          <el-form-item label="参标单位报价">
+            <div v-for="(comp, idx) in resultForm.competitors" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%">
+              <OrgSelector v-model="comp.org_id" style="flex: 1" />
+              <el-input-number v-model="comp.price" :min="0" :precision="2" :controls="false" placeholder="报价" style="width: 120px" />
+              <el-button type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+            <el-button type="primary" link @click="resultForm.competitors.push({ org_id: null, price: 0 })">+ 添加参标单位</el-button>
+          </el-form-item>
 
-        <el-form-item label="保证金状态">
-          <el-select v-model="resultForm.result_deposit_status" clearable placeholder="未设置">
-            <el-option label="未收回" value="未收回" />
-            <el-option label="已收回" value="已收回" />
-          </el-select>
-        </el-form-item>
+          <!-- 评分情况 -->
+          <el-form-item label="评分情况">
+            <div v-for="(score, idx) in resultForm.scoring_details" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%">
+              <el-input v-model="score.name" placeholder="单位名称" style="flex: 1" />
+              <el-input-number v-model="score.score" :min="0" :controls="false" placeholder="分数" style="width: 100px" />
+              <el-button type="danger" link @click="resultForm.scoring_details.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+            <el-button type="primary" link @click="resultForm.scoring_details.push({ name: '', score: 0 })">+ 添加评分记录</el-button>
+          </el-form-item>
 
-        <el-form-item label="是否中标">
-          <el-radio-group v-model="resultForm.is_won">
-            <el-radio :label="true">已中标</el-radio>
-            <el-radio :label="false">未中标</el-radio>
-          </el-radio-group>
-        </el-form-item>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="保证金状态">
+                <el-select v-model="resultForm.result_deposit_status" clearable placeholder="未设置" style="width: 100%">
+                  <el-option label="未收回" value="未收回" />
+                  <el-option label="已收回" value="已收回" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
 
-        <!-- 未中标 -->
-        <template v-if="!resultForm.is_won">
-          <el-form-item label="中标单位">
-            <OrgSelector v-model="resultForm.winning_org_id" />
-          </el-form-item>
-          <el-form-item v-if="controlPriceType === '金额'" label="中标金额">
-            <el-input-number v-model="resultForm.winning_amount" :min="0" :precision="2" :controls="false" style="width: 200px" />
-            <span style="margin-left: 8px; color: #999">元</span>
-          </el-form-item>
-          <el-form-item v-if="controlPriceType !== '金额'" :label="winningPriceLabel">
-            <el-input-number v-model="resultForm.winning_price" :min="0" :precision="2" :controls="false" style="width: 200px" />
-            <span style="margin-left: 8px; color: #999">%</span>
-          </el-form-item>
-          <el-form-item v-if="controlPriceType !== '金额'" label="中标金额">
-            <span style="color: #409EFF; font-weight: bold">{{ project.winning_amount_display || '-' }}</span>
-            <span style="margin-left: 4px; color: #999">（自动计算）</span>
-          </el-form-item>
-          <el-form-item label="未中标分析">
-            <el-input v-model="resultForm.lost_analysis" type="textarea" :rows="3" placeholder="分析未中标原因" />
-          </el-form-item>
-        </template>
+          <!-- 未中标 -->
+          <template v-if="!resultForm.is_won">
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="中标单位">
+                  <OrgSelector v-model="resultForm.winning_org_id" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item v-if="controlPriceType === '金额'" label="中标金额">
+                  <div style="display: flex; align-items: center; width: 100%">
+                    <el-input-number v-model="resultForm.winning_amount" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                    <span style="margin-left: 4px; color: #999">元</span>
+                  </div>
+                </el-form-item>
+                <el-form-item v-else :label="winningPriceLabel">
+                  <div style="display: flex; align-items: center; width: 100%">
+                    <el-input-number v-model="resultForm.winning_price" :min="0" :precision="2" :controls="false" style="flex: 1" />
+                    <span style="margin-left: 4px; color: #999">%</span>
+                  </div>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-form-item v-if="controlPriceType !== '金额'" label="中标金额">
+              <span style="color: #409EFF; font-weight: bold">{{ project.winning_amount_display || '-' }}</span>
+              <span style="margin-left: 4px; color: #999">（自动计算）</span>
+            </el-form-item>
+            <el-form-item label="未中标分析">
+              <el-input v-model="resultForm.lost_analysis" type="textarea" :rows="3" placeholder="分析未中标原因" />
+            </el-form-item>
+          </template>
 
-        <!-- 已中标 -->
-        <template v-if="resultForm.is_won">
-          <el-form-item v-if="controlPriceType !== '金额'" label="中标折扣率/下浮率">
-            <span style="font-weight: bold">{{ project.winning_price_display || '-' }}</span>
-            <span style="margin-left: 4px; color: #999">（自动填入）</span>
-          </el-form-item>
-          <el-form-item label="中标金额">
-            <el-tag type="success" size="large">{{ project.winning_amount_display || '-' }}</el-tag>
-            <span style="margin-left: 4px; color: #999">（自动计算）</span>
-          </el-form-item>
-          <el-form-item label="合同编号">
-            <el-input v-model="resultForm.contract_number" />
-          </el-form-item>
-          <el-form-item label="合同金额">
-            <el-input-number v-model="resultForm.contract_amount" :min="0" :precision="2" :controls="false" style="width: 200px" />
-            <span style="margin-left: 8px; color: #999">元</span>
-          </el-form-item>
-          <el-form-item label="合同状态">
-            <el-select v-model="resultForm.contract_status">
-              <el-option label="无" value="无" />
-              <el-option label="未签订" value="未签订" />
-              <el-option label="已签订未收回" value="已签订未收回" />
-              <el-option label="已签订已收回" value="已签订已收回" />
-            </el-select>
-          </el-form-item>
-        </template>
+          <!-- 已中标 -->
+          <template v-if="resultForm.is_won">
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item v-if="controlPriceType !== '金额'" label="中标折扣/下浮率">
+                  <span style="font-weight: bold">{{ project.winning_price_display || '-' }}</span>
+                  <span style="margin-left: 4px; color: #999">（自动填入）</span>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="中标金额">
+                  <el-tag type="success" size="large">{{ project.winning_amount_display || '-' }}</el-tag>
+                  <span style="margin-left: 4px; color: #999">（自动计算）</span>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="合同编号">
+                  <el-input v-model="resultForm.contract_number" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="合同状态">
+                  <el-select v-model="resultForm.contract_status" style="width: 100%">
+                    <el-option label="无" value="无" />
+                    <el-option label="未签订" value="未签订" />
+                    <el-option label="已签订未收回" value="已签订未收回" />
+                    <el-option label="已签订已收回" value="已签订已收回" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-form-item label="合同金额">
+              <div style="display: flex; align-items: center; width: 100%">
+                <el-input-number v-model="resultForm.contract_amount" :min="0" :precision="2" :controls="false" style="width: 200px" />
+                <span style="margin-left: 8px; color: #999">元</span>
+              </div>
+            </el-form-item>
+          </template>
 
-        <el-form-item label="备注">
-          <el-input v-model="resultForm.result_notes" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-    </el-card>
+          <el-form-item label="备注">
+            <el-input v-model="resultForm.result_notes" type="textarea" :rows="2" />
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
 
     <!-- 已放弃信息 -->
     <el-card v-if="isAbandoned && !isNew" style="margin-top: 16px">
@@ -557,3 +659,21 @@ onMounted(() => {
   loadUsers()
 })
 </script>
+
+<style scoped>
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.detail-grid > .el-card {
+  /* Ensure cards in the grid stretch properly */
+  min-width: 0;
+}
+
+/* When only 1 card is visible (new project), don't waste space */
+.detail-grid:has(> .el-card:only-child) {
+  grid-template-columns: 1fr;
+}
+</style>

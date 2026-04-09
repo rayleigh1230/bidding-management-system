@@ -12,6 +12,40 @@
 
 ---
 
+## 实现后变更记录（2026-04-08）
+
+> 以下变更在初始实现计划全部完成后进行，记录了数据模型、API 和前端的重要调整。
+
+### 数据模型变更
+
+1. **BiddingInfo** — `budget_type`（枚举：单价/总金额）替换为 `control_price_type`（枚举：金额/折扣率/下浮率），并新增 `control_price_upper` 和 `control_price_lower` 两个可空字段，支持招标控制价范围录入。
+2. **BidInfo** — 新增 `our_price` 字段（Decimal(15,2)，默认0），从 BidResult 移过来。投标报价录入在投标信息阶段完成。
+3. **BidResult** — 删除 `our_price`（移到 BidInfo），新增 `winning_org_id`（外键→Organization）和 `winning_price`（Decimal(15,2)），用于记录中标单位和中标价格。
+
+### API 变更
+
+- `enrich_project()` 新增 `include_related` 参数，`GET /api/projects/{id}` 现在一次性返回完整关联链（bidding_info、bid_info、bid_result），前端无需多次请求。
+- 项目删除从"阻断式"（有关联则报错）改为级联删除（自动删除 BidResult→BidInfo→BiddingInfo→Project）。
+- `enrich_bid_result()` 增强为完整链路遍历，自动计算 `our_price_display`（我方报价格式化显示）和 `winning_price_display`（中标价格格式化显示）。
+- 列表接口（projects、biddings、bids）均新增 `status` 查询参数，支持按项目状态过滤，使用 `try/except` 安全解析枚举。
+
+### 前端变更
+
+- **新增页面** `ProjectInfoList.vue`（路由 `/project-info`）：只显示"跟进中"状态的项目，提供快速访问入口。
+- **ProjectDetail.vue 大幅重写**：新建时单列布局，编辑时两列布局（项目信息+招标信息 并排）；底部追加投标信息和投标结果卡片；放弃的项目以只读 `el-descriptions` 展示。
+- **BiddingDetail.vue**：`budget_type` 替换为 `control_price_type` + 控制价范围输入，标签和单位根据类型动态切换。
+- **BidDetail.vue**：新增 `our_price` 字段，标签和单位根据 `control_price_type` 动态显示。
+- **ResultDetail.vue**：`our_price` 改为只读显示（来自 BidInfo，格式化后展示）；未中标时可录入中标单位和中标价格。
+- **各列表页**：BiddingList 默认过滤"已发公告"，BidList 默认过滤"准备投标"，ResultList 新增"中标单位"列。
+- **Layout.vue**：侧边栏新增"项目信息"菜单项。
+
+### 新增文件
+
+- `backend/migrate_db.py` — 数据库迁移脚本（将 our_price 从 bid_results 迁移到 bid_infos，添加 winning_org_id 和 winning_price）
+- `frontend/src/views/project/ProjectInfoList.vue` — 跟进中项目快速查看页
+
+---
+
 ## Phase 1: 后端基础
 
 ### Task 1: 后端项目脚手架 + 数据库配置

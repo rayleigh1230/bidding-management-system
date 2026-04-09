@@ -68,7 +68,8 @@
 │   │   │   ├── Dashboard.vue
 │   │   │   ├── project/
 │   │   │   │   ├── ProjectList.vue
-│   │   │   │   └── ProjectDetail.vue
+│   │   │   │   ├── ProjectDetail.vue
+│   │   │   │   └── ProjectInfoList.vue
 │   │   │   ├── bidding/
 │   │   │   │   ├── BiddingList.vue
 │   │   │   │   └── BiddingDetail.vue
@@ -184,8 +185,10 @@
 | tags | JSON | 项目标签数组（如 ["信息化","安防"]） |
 | registration_deadline | Date | 报名截止日期 |
 | bid_deadline | Date | 投标截止日期 |
-| budget_type | Enum | 预算类型：单价/总金额 |
 | budget_amount | Decimal(15,2) | 预算金额 |
+| control_price_type | Enum | 招标控制价类型：金额/折扣率/下浮率 |
+| control_price_upper | Decimal(15,2) | 控制价上限（nullable） |
+| control_price_lower | Decimal(15,2) | 控制价下限（nullable） |
 | is_prequalification | Boolean | 是否入围标 |
 | bid_specialist_id | Integer FK → User | 投标专员（系统用户，主要录入人和流程推进者） |
 | bid_documents | JSON | 招标文件附件路径数组 |
@@ -208,6 +211,7 @@
 | deposit_date | Date | 缴纳日期 |
 | deposit_return_date | Date | 退回日期 |
 | bid_files | JSON | 投标文件附件路径数组 |
+| our_price | Decimal(15,2) | 我方投标报价（default=0） |
 | notes | Text | 备注 |
 | created_by | Integer FK → User | 创建人 |
 | created_at | DateTime | 创建时间 |
@@ -228,11 +232,12 @@
 |------|------|------|
 | id | Integer PK | 自增ID |
 | bid_info_id | Integer FK → BidInfo UNIQUE | 关联投标信息（一对一） |
-| our_price | Decimal(15,2) | 我方投标报价 |
 | competitors | JSON | 参标单位及报价，格式：`[{"org_id": 1, "price": 100000}]` |
 | scoring_details | JSON | 评分情况（如有），格式：`[{"org_id": 1, "score": 85.5}]` |
 | deposit_status | Enum | 保证金状态（继承）：未收回/已收回 |
 | is_won | Boolean | 是否中标 |
+| winning_org_id | Integer FK → Organization (nullable) | 中标单位ID |
+| winning_price | Decimal(15,2) (nullable) | 中标价格 |
 | lost_analysis | Text | 未中标分析（is_won=false时填写） |
 | contract_number | String(100) | 合同编号（中标后填写） |
 | contract_status | Enum | 合同状态：无/未签订/已签订未收回/已签订已收回 |
@@ -269,6 +274,7 @@ Organization ←─── bidding_unit_id ─── ProjectInfo
                               bid_info_id (1:1)
                                           ↓
                                     BidResult ──── competitors (org_ids)
+                                               ──── winning_org_id → Organization
 
 Platform ←─── publish_platform_id ─── BiddingInfo
 Manager  ←─── manager_ids ─────────── ProjectInfo
@@ -319,6 +325,7 @@ User     ←─── bid_specialist_id ───── BiddingInfo
 ├── /projects                 项目管理
 │   ├── /projects             项目列表
 │   └── /projects/:id         项目详情（含流程按钮）
+├── /project-info             项目信息（跟进中项目快速查看）
 ├── /biddings                 招标信息
 │   ├── /biddings             招标列表
 │   └── /biddings/:id         招标详情（含流程按钮）
@@ -390,16 +397,16 @@ User     ←─── bid_specialist_id ───── BiddingInfo
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | /api/projects | 项目列表（分页、筛选、搜索） |
+| GET | /api/projects | 项目列表（分页、筛选、搜索，支持 `status` 过滤） |
 | POST | /api/projects | 创建项目 |
-| GET | /api/projects/{id} | 项目详情 |
+| GET | /api/projects/{id} | 项目详情（含关联的 BiddingInfo + BidInfo + BidResult） |
 | PUT | /api/projects/{id} | 更新项目 |
-| DELETE | /api/projects/{id} | 删除项目 |
-| GET | /api/biddings | 招标信息列表 |
+| DELETE | /api/projects/{id} | 删除项目（级联删除关联的 BidResult/BidInfo/BiddingInfo） |
+| GET | /api/biddings | 招标信息列表（支持 `status` 过滤） |
 | POST | /api/biddings | 创建招标信息 |
 | GET | /api/biddings/{id} | 招标信息详情 |
 | PUT | /api/biddings/{id} | 更新招标信息 |
-| GET | /api/bids | 投标信息列表 |
+| GET | /api/bids | 投标信息列表（支持 `status` 过滤） |
 | POST | /api/bids | 创建投标信息 |
 | GET | /api/bids/{id} | 投标信息详情 |
 | PUT | /api/bids/{id} | 更新投标信息 |
@@ -469,6 +476,19 @@ User     ←─── bid_specialist_id ───── BiddingInfo
 - **认证**：python-jose（JWT）+ passlib（bcrypt）
 - **文件上传**：上传至 backend/uploads/ 目录
 - **CORS**：允许前端开发服务器跨域
+
+### 6.4 数据库迁移
+
+`backend/migrate_db.py` 是数据库迁移脚本，用于处理数据模型变更。当前版本执行以下操作：
+
+1. 在 `bid_infos` 表添加 `our_price` 列（从 `bid_results` 移过来）
+2. 在 `bid_results` 表添加 `winning_org_id` 和 `winning_price` 列
+3. 将已有 `bid_results.our_price` 数据复制到 `bid_infos.our_price`
+4. 尝试删除 `bid_results.our_price` 旧列（需 SQLite 3.35+）
+
+脚本幂等设计：会先检查列是否存在再执行 ALTER TABLE，可安全重复运行。
+
+**使用方式**：拉取代码后，在启动服务器之前运行 `python backend/migrate_db.py`。
 
 ### 6.3 部署
 
