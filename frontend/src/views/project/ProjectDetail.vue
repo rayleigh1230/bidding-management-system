@@ -162,8 +162,8 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-form-item label="合作单位">
-            <OrgSelector v-model="bidForm.partner_ids" :multiple="true" :exclude-ours style="width: 100%" />
+          <el-form-item v-if="bidForm.bid_method !== '独立'" label="合作单位">
+            <OrgSelector v-model="bidForm.partner_ids" :multiple="true" :exclude-ours :exclude-ids="partnerExcludeIds" style="width: 100%" />
           </el-form-item>
           <el-form-item v-if="bidForm.bid_method === '联合体'" label="我方是否牵头">
             <el-switch v-model="bidForm.is_consortium_lead" active-text="是（牵头方）" inactive-text="否" />
@@ -600,6 +600,16 @@ function getExcludedOrgIds(currentIdx) {
   })
   return ids
 }
+
+// 合作单位排除规则：联合体模式下排除参标单位已有的 org_ids；配合/陪标不排除
+const partnerExcludeIds = computed(() => {
+  if (bidForm.value.bid_method !== '联合体') return []
+  const ids = []
+  resultForm.value.competitors.forEach(c => {
+    c.org_ids.forEach(id => { if (!ids.includes(id)) ids.push(id) })
+  })
+  return ids
+})
 
 // ---- ensureOurCompanyInCompetitors ----
 
