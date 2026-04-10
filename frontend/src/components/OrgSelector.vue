@@ -7,10 +7,11 @@
     :remote-method="handleSearch"
     :loading="loading"
     clearable
+    :multiple="multiple"
     @update:model-value="$emit('update:modelValue', $event)"
     @change="handleChange"
   >
-    <el-option v-for="item in options" :key="item.id" :label="item.name" :value="item.id" />
+    <el-option v-for="item in filteredOptions" :key="item.id" :label="item.name" :value="item.id" />
     <template #footer>
       <el-button type="primary" link size="small" @click="showDialog = true">+ 新增单位</el-button>
     </template>
@@ -42,17 +43,21 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getOrganizations, createOrganization } from '../api/dict'
 
 const props = defineProps({
-  modelValue: { type: [Number, null], default: null },
+  modelValue: { type: [Number, Array, null], default: null },
   excludeOurs: { type: Boolean, default: false },
+  multiple: { type: Boolean, default: false },
+  excludeIds: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update:modelValue', 'change'])
 
 const options = ref([])
+const excludeSet = computed(() => new Set(props.excludeIds))
+const filteredOptions = computed(() => options.value.filter(o => !excludeSet.value.has(o.id)))
 const loading = ref(false)
 const showDialog = ref(false)
 const submitting = ref(false)
@@ -100,7 +105,12 @@ async function handleCreate() {
     ElMessage.success('新增成功')
     showDialog.value = false
     options.value = [org, ...options.value]
-    emit('update:modelValue', org.id)
+    if (props.multiple) {
+      const currentVal = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+      emit('update:modelValue', [...currentVal, org.id])
+    } else {
+      emit('update:modelValue', org.id)
+    }
     emit('change', org)
     form.value = { name: '', short_name: '', contact_person: '', contact_phone: '', notes: '' }
   } catch (err) {
@@ -117,5 +127,17 @@ function handleChange(val) {
 
 watch(() => props.modelValue, (val) => {
   if (val && !loaded) preloadOptions()
+  // For multiple mode, ensure options contain all selected values
+  if (props.multiple && Array.isArray(val) && val.length && loaded) {
+    const existingIds = new Set(options.value.map(o => o.id))
+    const missingIds = val.filter(id => !existingIds.has(id))
+    if (missingIds.length) {
+      getOrganizations({ page_size: 100 }).then(res => {
+        const allOrgs = res.items || []
+        const missing = allOrgs.filter(o => missingIds.includes(o.id))
+        options.value = [...missing, ...options.value]
+      }).catch(() => {})
+    }
+  }
 }, { immediate: true })
 </script>

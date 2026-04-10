@@ -98,6 +98,7 @@ class ProjectInfo(Base):
     # ---- Section 3: 投标信息 (status >= 准备投标) ----
     partner_ids: Mapped[str] = mapped_column(JSON, default=[])
     bid_method: Mapped[str] = mapped_column(Enum(BidMethod), default=BidMethod.independent)
+    is_consortium_lead: Mapped[bool] = mapped_column(Boolean, default=True)
     bid_status: Mapped[str] = mapped_column(Enum(BidStatus), default=BidStatus.not_registered)
     has_deposit: Mapped[bool] = mapped_column(Boolean, default=False)
     deposit_status: Mapped[str] = mapped_column(Enum(DepositStatus), default=DepositStatus.none)

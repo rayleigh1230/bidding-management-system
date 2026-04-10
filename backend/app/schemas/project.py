@@ -40,6 +40,7 @@ class ProjectUpdate(BaseModel):
     # Section 3: 投标信息
     partner_ids: Optional[list[int]] = None
     bid_method: Optional[str] = None
+    is_consortium_lead: Optional[bool] = None
     bid_status: Optional[str] = None
     has_deposit: Optional[bool] = None
     deposit_status: Optional[str] = None
@@ -97,6 +98,7 @@ class ProjectResponse(BaseModel):
     # Section 3
     partner_ids: Any = []
     bid_method: Optional[str] = None
+    is_consortium_lead: bool = True
     bid_status: Optional[str] = None
     has_deposit: bool = False
     deposit_status: Optional[str] = None

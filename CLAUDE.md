@@ -56,8 +56,8 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 |---------|--------------|-------------|
 | 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, etc. | Always |
 | 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, is_prequalification (是否入围标), etc. | status >= 已发公告 |
-| 投标信息 | partner_ids, bid_method, bid_status, deposit fields, our_price, etc. | status >= 准备投标 |
-| 投标结果 | competitors (含 price/score/is_shortlisted), scoring_details, is_won, winning_org_ids (多中标单位), winning_price/amount, result_deposit_status, contract fields, etc. | status >= 已投标 |
+| 投标信息 | partner_ids, bid_method, is_consortium_lead, bid_status, deposit fields, our_price, etc. | status >= 准备投标 |
+| 投标结果 | competitors (含 org_ids/price/score/is_winning), scoring_details, is_won, winning_org_ids (自动推导), winning_price/amount, result_deposit_status, contract fields, etc. | status >= 已投标 |
 
 **Field naming for merged columns:**
 - BiddingInfo.notes → `bidding_notes`
@@ -77,7 +77,7 @@ Flow endpoints only change the status field — no new records are created:
 - `POST /api/projects/{id}/prepare` — 已发公告 → 准备投标
 - `POST /api/projects/{id}/submit` — 准备投标 → 已投标 (+ sets `result_deposit_status=未收回` when `has_deposit=true` and `deposit_status=已缴纳`)
 - `POST /api/projects/{id}/abandon` — any → 已放弃 (with reason)
-- `PUT /api/projects/{id}` with `is_won` field — 已投标 → 已中标/未中标 (auto-calculates winning_price/winning_amount, except for 入围标 which uses manual input)
+- `PUT /api/projects/{id}` with `is_won` field — 已投标 → 已中标/未中标 (auto-derives winning_org_ids/winning_price/winning_amount from competitors' is_winning flag, except for 入围标 which uses manual input)
 
 ### API Response Conventions
 - List endpoints return `{"items": [...], "total": N, "page": P, "page_size": S}`
@@ -87,8 +87,9 @@ Flow endpoints only change the status field — no new records are created:
 
 ### Frontend-Backend Data Mapping
 - Frontend sends region as `JSON.stringify(["浙江省","杭州市","西湖区"])`, stored in `String(100)` column
-- JSON fields (`manager_ids`, `partner_ids`, `tags`, `competitors`, `scoring_details`, `winning_org_ids`) are stored as serialized JSON strings; frontend must `JSON.parse()` on read and send arrays on write. `competitors` stores `{org_id, price, score, is_shortlisted}` per entry. `winning_org_ids` stores array of org IDs for multiple winning orgs (入围标/联合体).
+- JSON fields (`manager_ids`, `partner_ids`, `tags`, `competitors`, `scoring_details`, `winning_org_ids`) are stored as serialized JSON strings; frontend must `JSON.parse()` on read and send arrays on write. `competitors` stores `{org_ids: [int], price, score, is_shortlisted, is_winning}` per entry (old format `{org_id, ...}` auto-converted on load). `winning_org_ids` is auto-derived from competitors where `is_winning=true`.
 - Frontend `collectSaveData()` only includes form fields from currently visible card sections to avoid sending irrelevant data (e.g., not sending `is_won` when result card isn't visible)
+- **Competitors backward compat**: Old format `{org_id: 1, ...}` is auto-converted to `{org_ids: [1], ...}` in both `enrich_project()` (backend) and `loadProject()` (frontend). `is_winning` defaults to `false` for old data.
 
 ### Key Technical Notes
 - **bcrypt**: Must pin `bcrypt==4.1.3`. Version 5.x is incompatible with `passlib 1.7.4` (causes `__about__` AttributeError and wrap bug ValueError).
@@ -97,9 +98,10 @@ Flow endpoints only change the status field — no new records are created:
 - **Price calculation**: `_control_type_str()` handles Python 3.13 enum str() issue (returns enum member like `BudgetType.discount_rate` instead of value). Always use this helper instead of raw comparison.
 - **Winning amount formula**: 折扣率: `our_price / upper * budget`. 下浮率: `(1 - our_price/100) / (1 - upper/100) * budget`. 金额: `our_price` directly.
 - **Status guard**: Backend only allows is_won → status change when current status is "已投标", preventing premature status changes from partial saves.
-- **入围标 (shortlisting)**: When `is_prequalification=true`, competitors have an "入围" checkbox. Checking it auto-adds the org to `winning_org_ids`. In won state, winning_price/winning_amount use manual input (not auto-calculated). Our company is auto-added to competitors when status >= 已投标 (via `ensureOurCompanyInCompetitors()` at end of `loadProject()`). Watch on `is_won` auto-toggles our company's `is_shortlisted` and `winning_org_ids` for 入围标.
-- **OrgType filter**: Organizations have `org_type` field (ours/external). `OrgSelector` has `excludeOurs` prop to filter out our company from bidding_unit, agency, and partner selections, while keeping it available for competitors and winning org.
-- **Multi winning orgs**: `winning_org_ids` (JSON array) supports multiple winning orgs (入围标 multiple shortlisted, 联合体 consortium). `winning_org_id` (single Integer) kept for backward compat. Frontend uses el-tag display with inline el-select search for adding orgs.
+- **入围标 (shortlisting)**: When `is_prequalification=true`, competitors have a "中标" checkbox that allows multi-select. When `is_prequalification=false`, the checkbox enforces single-select (radio behavior). `winning_org_ids` is auto-derived from checked competitors' `org_ids`. In won state for 入围标, winning_price/winning_amount use manual input (not auto-calculated).
+- **联合体 (consortium)**: When `bid_method="联合体"`, `is_consortium_lead` field (default true) controls whether our company is the lead. Partner orgs + our company are auto-grouped as one competitor entry with `org_ids: [ourOrgId, ...partnerIds]`. Contract info only shows when `is_consortium_lead=true` AND `is_won=true`. Switching bid_method away from 联合体 auto-clears partner_ids and updates competitor entries.
+- **OrgType filter**: Organizations have `org_type` field (ours/external). `OrgSelector` has `excludeOurs` prop to filter out our company, and `excludeIds` prop to exclude specific IDs (used for dedup across competitor entries).
+- **Multi winning orgs**: `winning_org_ids` (JSON array) is auto-derived from competitors' `is_winning` checkboxes — no manual input needed. `winning_org_id` (single Integer) kept for backward compat.
 - **Bid deposit two-state model**: `DepositStatus` enum (`无`/`未缴纳`/`已缴纳`) for bid info section's `deposit_status` field. `ResultDepositStatus` enum (`未收回`/`已收回`) for result section's `result_deposit_status` field. Submit endpoint sets `result_deposit_status=未收回` only when `deposit_status=已缴纳`. Result section's deposit UI only shows when `deposit_status=已缴纳`. `enrich_project()` computes `deposit_status_display` field: shows 缴纳状态 before 已投标, shows 收回状态 from 已投标 onward.
 - **OrgMap loading**: `loadOrgNames()` uses `page_size=100` (backend max). Previously used 500 which caused 422 error and empty orgMap, breaking all org-dependent features.
 - **No tests**: The project has no test suite.

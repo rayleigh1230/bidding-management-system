@@ -186,6 +186,37 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     else:
         data["winning_org_names"] = []
 
+    # competitors: backward compat + enrich org_names
+    raw_competitors = data.get("competitors", [])
+    if isinstance(raw_competitors, str):
+        try:
+            raw_competitors = json.loads(raw_competitors)
+        except (json.JSONDecodeError, TypeError):
+            raw_competitors = []
+    all_org_ids = set()
+    converted = []
+    for c in raw_competitors:
+        if not isinstance(c, dict):
+            continue
+        # Backward compat: org_id -> org_ids
+        if "org_ids" not in c and "org_id" in c:
+            c["org_ids"] = [c["org_id"]] if c["org_id"] else []
+        if "org_ids" not in c:
+            c["org_ids"] = []
+        if "is_winning" not in c:
+            c["is_winning"] = False
+        all_org_ids.update(c["org_ids"])
+        converted.append(c)
+    # Batch query org names
+    if all_org_ids:
+        orgs = db.query(Organization).filter(Organization.id.in_(all_org_ids)).all()
+        org_name_map = {o.id: o.name for o in orgs}
+    else:
+        org_name_map = {}
+    for c in converted:
+        c["org_names"] = [org_name_map.get(oid, "未知单位") for oid in c["org_ids"]]
+    data["competitors"] = converted
+
     # Price displays
     control_type = _control_type_str(project.control_price_type)
     our_price = float(project.our_price) if project.our_price else 0
@@ -322,40 +353,82 @@ def update_project(
             value = json.dumps(value, ensure_ascii=False)
         setattr(project, field, value)
 
-    # Auto-calculate winning_price / winning_amount when is_won changes
+    # Auto-calculate winning info from competitors when is_won changes
     # Only when project is in "已投标" status
     if "is_won" in update_data and project.status == ProjectStatus.submitted:
         control_type = _control_type_str(project.control_price_type)
-        our_price = float(project.our_price) if project.our_price else 0
         is_shortlisting = project.is_prequalification  # 入围标
+
+        # Extract winning info from competitors
+        raw_comps = project.competitors
+        if isinstance(raw_comps, str):
+            try:
+                raw_comps = json.loads(raw_comps)
+            except (json.JSONDecodeError, TypeError):
+                raw_comps = []
+
+        winning_entries = []
+        for c in raw_comps:
+            if isinstance(c, dict) and c.get("is_winning"):
+                winning_entries.append(c)
+
+        # Derive winning_org_ids from winning competitors
+        derived_org_ids = []
+        for entry in winning_entries:
+            org_ids = entry.get("org_ids", [])
+            if not org_ids and entry.get("org_id"):
+                org_ids = [entry["org_id"]]
+            derived_org_ids.extend(org_ids)
+
+        if derived_org_ids:
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_ids = []
+            for oid in derived_org_ids:
+                if oid not in seen:
+                    seen.add(oid)
+                    unique_ids.append(oid)
+            project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
+            # backward compat
+            project.winning_org_id = unique_ids[0] if unique_ids else None
+        else:
+            project.winning_org_ids = json.dumps([], ensure_ascii=False)
+            project.winning_org_id = None
 
         if project.is_won:
             if is_shortlisting:
                 # 入围标：不自动计算，保持前端传入的手动值
                 project.status = ProjectStatus.won
             else:
-                # 非入围标：自动计算 winning_price / winning_amount
-                if control_type == "金额":
-                    project.winning_price = None
-                    project.winning_amount = our_price if our_price else None
-                elif control_type in ("折扣率", "下浮率"):
-                    project.winning_price = our_price if our_price else None
-                    project.winning_amount = _calc_winning_amount(
-                        our_price, control_type, project.control_price_upper, project.budget_amount
-                    )
+                # 非入围标：从 winning competitors 推导 winning_price/winning_amount
+                if winning_entries:
+                    wp = winning_entries[0].get("price", 0)
+                    if wp:
+                        if control_type == "金额":
+                            project.winning_price = None
+                            project.winning_amount = wp
+                        else:
+                            project.winning_price = wp
+                            project.winning_amount = _calc_winning_amount(
+                                wp, control_type, project.control_price_upper, project.budget_amount
+                            )
                 project.status = ProjectStatus.won
         else:
             if is_shortlisting:
-                # 入围标未中标：不自动计算
                 project.status = ProjectStatus.lost
             else:
-                # 非入围标：自动计算 winning_amount
-                if control_type == "金额":
-                    project.winning_price = None
-                elif control_type in ("折扣率", "下浮率"):
-                    project.winning_amount = _calc_winning_amount(
-                        project.winning_price, control_type, project.control_price_upper, project.budget_amount
-                    )
+                # 非入围标未中标：从 winning competitors 推导
+                if winning_entries:
+                    wp = winning_entries[0].get("price", 0)
+                    if wp:
+                        if control_type == "金额":
+                            project.winning_price = None
+                            project.winning_amount = wp
+                        else:
+                            project.winning_price = wp
+                            project.winning_amount = _calc_winning_amount(
+                                wp, control_type, project.control_price_upper, project.budget_amount
+                            )
                 project.status = ProjectStatus.lost
 
     log_operation(db, current_user.id, "update", "project", project.id, f"更新项目: {project.project_name}")

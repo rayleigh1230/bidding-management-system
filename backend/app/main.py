@@ -41,6 +41,13 @@ def on_startup():
             conn.commit()
         print("Migration: added winning_org_ids column to project_infos")
 
+    # Auto-migrate: add is_consortium_lead column to project_infos if not exists
+    if 'is_consortium_lead' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN is_consortium_lead BOOLEAN DEFAULT 1"))
+            conn.commit()
+        print("Migration: added is_consortium_lead column to project_infos")
+
     # Create default admin user
     from sqlalchemy.orm import Session
     from .models.user import User

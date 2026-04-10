@@ -165,6 +165,9 @@
           <el-form-item label="合作单位">
             <OrgSelector v-model="bidForm.partner_ids" :multiple="true" :exclude-ours style="width: 100%" />
           </el-form-item>
+          <el-form-item v-if="bidForm.bid_method === '联合体'" label="我方是否牵头">
+            <el-switch v-model="bidForm.is_consortium_lead" active-text="是（牵头方）" inactive-text="否" />
+          </el-form-item>
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="有保证金">
@@ -210,19 +213,44 @@
             </el-radio-group>
           </el-form-item>
 
-          <!-- 参标单位报价 + 评分（合并） -->
+          <!-- 参标单位报价 + 评分 + 中标勾选 -->
           <el-form-item label="参标单位">
-            <div v-for="(comp, idx) in resultForm.competitors" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; width: 100%; align-items: center">
-              <OrgSelector v-model="comp.org_id" style="flex: 2" />
+            <div v-for="(comp, idx) in resultForm.competitors" :key="idx"
+                 :style="{ display: 'flex', gap: '8px', marginBottom: '8px', width: '100%', alignItems: 'center',
+                            border: comp.is_winning ? '2px solid #67c23a' : '1px solid #ddd',
+                            borderRadius: '8px', padding: '8px', background: comp.is_winning ? '#f0f9eb' : '#fff' }">
+              <!-- 类型标签 -->
+              <el-tag size="small" :type="comp.org_ids.length > 1 ? 'warning' : 'info'" style="flex-shrink: 0">
+                {{ comp.org_ids.length > 1 ? '联合体' : comp.org_ids.length === 1 ? '独立' : '待选' }}
+              </el-tag>
+              <!-- 单位选择/展示 -->
+              <div style="display: flex; flex-wrap: wrap; gap: 4px; flex: 1; align-items: center;">
+                <el-tag v-for="oid in comp.org_ids" :key="oid" size="small" :type="isOurOrg(oid) ? '' : 'info'">
+                  {{ getOrgName(oid) }}
+                </el-tag>
+                <template v-if="!isOurEntry(comp)">
+                  <el-button v-if="!comp._editing" size="small" type="primary" link @click="comp._editing = true">编辑</el-button>
+                  <el-button v-if="comp._editing" size="small" type="success" link @click="comp._editing = false">完成</el-button>
+                </template>
+              </div>
+              <!-- 编辑态：OrgSelector -->
+              <div v-if="comp._editing || !comp.org_ids.length" style="flex: 1; min-width: 180px;">
+                <OrgSelector v-model="comp.org_ids" :multiple="true" :exclude-ids="getExcludedOrgIds(idx)" style="width: 100%"
+                  @change="syncOrgToMap" />
+              </div>
+              <!-- 报价 -->
               <div style="display: flex; align-items: center">
-                <el-input-number v-model="comp.price" :min="0" :precision="2" :controls="false" placeholder="报价" style="width: 110px" />
+                <el-input-number v-model="comp.price" :min="0" :precision="2" :controls="false" placeholder="报价" style="width: 100px" />
                 <span style="margin-left: 2px; color: #999; white-space: nowrap; font-size: 12px">{{ controlPriceType !== '金额' ? '%' : '元' }}</span>
               </div>
-              <el-input-number v-model="comp.score" :min="0" :precision="1" :controls="false" placeholder="评分" style="width: 85px" />
-              <el-checkbox v-if="biddingForm.is_prequalification" v-model="comp.is_shortlisted" @change="handleShortlistChange(comp)">入围</el-checkbox>
-              <el-button type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
+              <!-- 评分 -->
+              <el-input-number v-model="comp.score" :min="0" :precision="1" :controls="false" placeholder="评分" style="width: 80px" />
+              <!-- 中标勾选 -->
+              <el-checkbox v-model="comp.is_winning" @change="handleWinningChange(comp)">中标</el-checkbox>
+              <!-- 删除按钮（我方条目不可删除） -->
+              <el-button v-if="!isOurEntry(comp)" type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
-            <el-button type="primary" link @click="resultForm.competitors.push({ org_id: null, price: 0, score: 0, is_shortlisted: false })">+ 添加参标单位</el-button>
+            <el-button type="primary" link @click="addCompetitor">+ 添加参标单位</el-button>
           </el-form-item>
 
           <!-- 保证金状态（仅已缴纳时显示收回流程） -->
@@ -242,30 +270,14 @@
             </el-col>
           </el-row>
 
-          <!-- 中标单位（独立一排，多选标签） -->
+          <!-- 中标单位（只读展示，从参标单位勾选推导） -->
           <el-form-item label="中标单位">
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%">
-              <el-tag
-                v-for="orgId in resultForm.winning_org_ids"
-                :key="orgId"
-                closable
-                type="success"
-                size="large"
-                @close="removeWinningOrg(orgId)"
-              >{{ getOrgName(orgId) }}</el-tag>
-              <el-select
-                :model-value="null"
-                placeholder="+ 添加中标单位"
-                filterable
-                remote
-                :remote-method="handleWinningOrgSearch"
-                :loading="winningOrgLoading"
-                style="width: 180px"
-                @update:model-value="addWinningOrg"
-              >
-                <el-option v-for="item in winningOrgOptions" :key="item.id" :label="item.name" :value="item.id" />
-              </el-select>
+            <div v-if="resultForm.winning_org_ids.length" style="display: flex; flex-wrap: wrap; gap: 6px">
+              <el-tag v-for="orgId in resultForm.winning_org_ids" :key="orgId" type="success" size="large">
+                {{ getOrgName(orgId) }}
+              </el-tag>
             </div>
+            <span v-else style="color: #999">请在参标单位中勾选中标</span>
           </el-form-item>
 
           <!-- 中标折扣率/下浮率 + 中标金额（同一排） -->
@@ -279,17 +291,10 @@
                     <span style="margin-left: 4px; color: #999">%</span>
                   </div>
                 </template>
-                <!-- 已中标+非入围：自动填入 -->
-                <template v-else-if="resultForm.is_won">
-                  <span style="font-weight: bold">{{ project.winning_price_display || '-' }}</span>
-                  <span style="margin-left: 4px; color: #999">（自动填入）</span>
-                </template>
-                <!-- 未中标+非入围：手动输入 -->
+                <!-- 非入围标：自动推导 -->
                 <template v-else>
-                  <div style="display: flex; align-items: center; width: 100%">
-                    <el-input-number v-model="resultForm.winning_price" :min="0" :precision="2" :controls="false" style="flex: 1" />
-                    <span style="margin-left: 4px; color: #999">%</span>
-                  </div>
+                  <span style="font-weight: bold">{{ derivedWinningPriceDisplay }}</span>
+                  <span style="margin-left: 4px; color: #999; font-size: 12px">（自动推导）</span>
                 </template>
               </el-form-item>
             </el-col>
@@ -302,22 +307,17 @@
                     <span style="margin-left: 4px; color: #999">元</span>
                   </div>
                 </template>
-                <!-- 已中标+非入围：自动计算 -->
-                <template v-else-if="resultForm.is_won">
-                  <el-tag type="success" size="large">{{ project.winning_amount_display || '-' }}</el-tag>
-                  <span style="margin-left: 4px; color: #999">（自动计算）</span>
-                </template>
-                <!-- 未中标+非入围：自动计算 -->
+                <!-- 非入围标：自动推导 -->
                 <template v-else>
-                  <span style="color: #409EFF; font-weight: bold">{{ project.winning_amount_display || '-' }}</span>
-                  <span style="margin-left: 4px; color: #999">（自动计算）</span>
+                  <span style="color: #409EFF; font-weight: bold">{{ derivedWinningAmountDisplay }}</span>
+                  <span style="margin-left: 4px; color: #999; font-size: 12px">（自动推导）</span>
                 </template>
               </el-form-item>
             </el-col>
           </el-row>
 
-          <!-- 已中标专属：合同信息 -->
-          <template v-if="resultForm.is_won">
+          <!-- 已中标专属：合同信息（联合体时需为牵头方） -->
+          <template v-if="resultForm.is_won && (bidForm.bid_method !== '联合体' || bidForm.is_consortium_lead)">
             <el-row :gutter="16">
               <el-col :span="12">
                 <el-form-item label="合同编号">
@@ -413,23 +413,6 @@ const showAbandonDialog = ref(false)
 const abandonReason = ref('')
 const users = ref([])
 const orgMap = ref({})  // id -> { id, name }
-const winningOrgOptions = ref([])
-const winningOrgLoading = ref(false)
-let winningOrgTimer = null
-
-function handleWinningOrgSearch(query) {
-  clearTimeout(winningOrgTimer)
-  if (!query) return
-  winningOrgTimer = setTimeout(async () => {
-    winningOrgLoading.value = true
-    try {
-      const res = await getOrganizations({ keyword: query, page_size: 50 })
-      winningOrgOptions.value = res.items || []
-    } finally {
-      winningOrgLoading.value = false
-    }
-  }, 300)
-}
 
 const isNew = computed(() => route.params.id === 'new')
 
@@ -477,11 +460,6 @@ const winningPriceLabel = computed(() => {
 
 const OUR_COMPANY_NAME = '浙江意诚检测有限公司'
 
-function getOurOrgId() {
-  const org = Object.values(orgMap.value).find(o => o.name === OUR_COMPANY_NAME)
-  return org ? org.id : null
-}
-
 // ---- Forms ----
 const projectFormRef = ref(null)
 const defaultProjectForm = { bidding_type: '', project_name: '', bidding_unit_id: null, region: [], manager_ids: [], description: '' }
@@ -500,7 +478,7 @@ const defaultBiddingForm = {
 const biddingForm = ref({ ...defaultBiddingForm })
 
 const defaultBidForm = {
-  partner_ids: [], bid_method: '独立', bid_status: '未报名',
+  partner_ids: [], bid_method: '独立', is_consortium_lead: true, bid_status: '未报名',
   has_deposit: false, deposit_status: '未缴纳', deposit_amount: 0,
   deposit_date: null, deposit_return_date: null, our_price: 0, bid_notes: '',
 }
@@ -513,60 +491,182 @@ const defaultResultForm = {
 }
 const resultForm = ref({ ...defaultResultForm })
 
-function handleShortlistChange(comp) {
-  if (comp.is_shortlisted && comp.org_id) {
-    if (!resultForm.value.winning_org_ids.includes(comp.org_id)) {
-      resultForm.value.winning_org_ids.push(comp.org_id)
-    }
-  } else if (!comp.is_shortlisted && comp.org_id) {
-    resultForm.value.winning_org_ids = resultForm.value.winning_org_ids.filter(id => id !== comp.org_id)
-  }
-}
-
-function addWinningOrg(orgId) {
-  if (orgId && !resultForm.value.winning_org_ids.includes(orgId)) {
-    resultForm.value.winning_org_ids.push(orgId)
-  }
-}
-
-function removeWinningOrg(orgId) {
-  resultForm.value.winning_org_ids = resultForm.value.winning_org_ids.filter(id => id !== orgId)
-}
+// ---- Competitor helpers ----
 
 function getOrgName(orgId) {
   return orgMap.value[orgId]?.name || '未知单位'
 }
 
-function ensureOurCompanyInCompetitors() {
+function isOurOrg(orgId) {
   const ourOrgId = getOurOrgId()
-  if (!ourOrgId || !showResult.value) return
-  const alreadyIn = resultForm.value.competitors.some(c => c.org_id === ourOrgId)
-  if (!alreadyIn) {
-    const ourPrice = bidForm.value.our_price || 0
-    resultForm.value.competitors.push({ org_id: ourOrgId, price: ourPrice, score: 0, is_shortlisted: false })
+  return orgId === ourOrgId
+}
+
+function isOurEntry(comp) {
+  const ourOrgId = getOurOrgId()
+  return ourOrgId && comp.org_ids.includes(ourOrgId)
+}
+
+function getOurOrgId() {
+  const org = Object.values(orgMap.value).find(o => o.name === OUR_COMPANY_NAME)
+  return org ? org.id : null
+}
+
+// ---- Winning logic ----
+
+let _updatingFromWinning = false
+
+function handleWinningChange(comp) {
+  const isPrequalification = biddingForm.value.is_prequalification
+  if (!isPrequalification) {
+    // 非入围标：单选行为
+    if (comp.is_winning) {
+      resultForm.value.competitors.forEach(c => { c.is_winning = false })
+      comp.is_winning = true
+    }
+  }
+  deriveWinningOrgs()
+  // 联动 is_won（标志不立即重置，由 is_won watch 消费）
+  _updatingFromWinning = true
+  const ourOrgId = getOurOrgId()
+  const winningEntries = resultForm.value.competitors.filter(c => c.is_winning)
+  if (winningEntries.some(c => c.org_ids.includes(ourOrgId))) {
+    resultForm.value.is_won = true
+  } else if (winningEntries.length > 0) {
+    resultForm.value.is_won = false
   }
 }
 
-watch(() => resultForm.value.is_won, (newVal) => {
-  if (biddingForm.value.is_prequalification) {
-    const ourOrgId = getOurOrgId()
-    if (ourOrgId) {
-      const ourComp = resultForm.value.competitors.find(c => c.org_id === ourOrgId)
-      if (ourComp) ourComp.is_shortlisted = newVal
-      if (newVal) {
-        addWinningOrg(ourOrgId)
-      } else {
-        removeWinningOrg(ourOrgId)
-      }
-    }
+function deriveWinningOrgs() {
+  resultForm.value.winning_org_ids = resultForm.value.competitors
+    .filter(c => c.is_winning || c.is_shortlisted)
+    .flatMap(c => c.org_ids)
+}
+
+// ---- Derived display for winning price/amount ----
+
+const derivedWinningPriceDisplay = computed(() => {
+  const winning = resultForm.value.competitors.find(c => c.is_winning)
+  if (!winning) return '-'
+  const price = winning.price
+  if (!price) return '-'
+  const type = controlPriceType.value
+  if (type === '金额') return '-'
+  return `${price}%`
+})
+
+const derivedWinningAmountDisplay = computed(() => {
+  const winning = resultForm.value.competitors.find(c => c.is_winning)
+  if (!winning || !winning.price) return '-'
+  const type = controlPriceType.value
+  const price = winning.price
+  const upper = parseFloat(biddingForm.value.control_price_upper) || 0
+  const budget = parseFloat(biddingForm.value.budget_amount) || 0
+  if (type === '金额') return `¥${price.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (type === '折扣率') {
+    if (!upper || !budget) return '-'
+    const amount = price / upper * budget
+    return `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }
+  if (type === '下浮率') {
+    if (!upper || !budget) return '-'
+    const amount = (1 - price / 100) / (1 - upper / 100) * budget
+    return `¥${amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+  return '-'
+})
+
+// ---- Add competitor ----
+
+function addCompetitor() {
+  resultForm.value.competitors.push({
+    org_ids: [], price: 0, score: 0, is_shortlisted: false, is_winning: false, _editing: true,
+  })
+}
+
+function syncOrgToMap(org) {
+  // Sync OrgSelector's options into orgMap so getOrgName works
+  if (org && org.id && !orgMap.value[org.id]) {
+    orgMap.value[org.id] = org
+  }
+}
+
+function getExcludedOrgIds(currentIdx) {
+  const ids = []
+  resultForm.value.competitors.forEach((c, i) => {
+    if (i !== currentIdx) {
+      c.org_ids.forEach(id => { if (!ids.includes(id)) ids.push(id) })
+    }
+  })
+  return ids
+}
+
+// ---- ensureOurCompanyInCompetitors ----
+
+function ensureOurCompanyInCompetitors() {
+  const ourOrgId = getOurOrgId()
+  if (!ourOrgId || !showResult.value) return
+
+  const ourEntry = resultForm.value.competitors.find(c => c.org_ids.includes(ourOrgId))
+  const isConsortium = bidForm.value.bid_method === '联合体'
+  const expectedOrgIds = isConsortium
+    ? [ourOrgId, ...(bidForm.value.partner_ids || [])]
+    : [ourOrgId]
+
+  if (ourEntry) {
+    // Update org_ids based on current bid_method
+    ourEntry.org_ids = expectedOrgIds
+    return
+  }
+
+  // Create new entry
+  resultForm.value.competitors.push({
+    org_ids: expectedOrgIds,
+    price: bidForm.value.our_price || 0, score: 0,
+    is_shortlisted: false, is_winning: false,
+  })
+}
+
+// ---- Watchers ----
+
+watch(() => resultForm.value.is_won, (newVal) => {
+  // 跳过由 handleWinningChange 触发的更新，避免循环
+  if (_updatingFromWinning) {
+    _updatingFromWinning = false
+    return
+  }
+  const ourOrgId = getOurOrgId()
+  if (!ourOrgId) return
+  const ourComp = resultForm.value.competitors.find(c => c.org_ids.includes(ourOrgId))
+  if (newVal) {
+    // 已中标：自动勾选我方条目（单选行为）
+    resultForm.value.competitors.forEach(c => { c.is_winning = false })
+    if (ourComp) ourComp.is_winning = true
+  } else {
+    // 未中标：取消所有勾选
+    resultForm.value.competitors.forEach(c => { c.is_winning = false })
+  }
+  deriveWinningOrgs()
 })
 
 watch(() => bidForm.value.our_price, (newPrice) => {
   const ourOrgId = getOurOrgId()
   if (!ourOrgId) return
-  const ourComp = resultForm.value.competitors.find(c => c.org_id === ourOrgId)
+  const ourComp = resultForm.value.competitors.find(c => c.org_ids.includes(ourOrgId))
   if (ourComp) ourComp.price = newPrice
+})
+
+watch(() => bidForm.value.partner_ids, () => {
+  ensureOurCompanyInCompetitors()
+}, { deep: true })
+
+watch(() => bidForm.value.bid_method, (newVal) => {
+  // 切换为非联合体时清空合作单位，联动参标单位更新
+  if (newVal !== '联合体') {
+    bidForm.value.partner_ids = []
+  }
+  ensureOurCompanyInCompetitors()
+  deriveWinningOrgs()
 })
 
 watch(() => bidForm.value.has_deposit, (newVal) => {
@@ -614,6 +714,7 @@ async function loadProject() {
     // Fill bid form
     bidForm.value = {
       partner_ids: parseJson(data.partner_ids, []), bid_method: data.bid_method || '独立',
+      is_consortium_lead: data.is_consortium_lead !== false,
       bid_status: data.bid_status || '未报名', has_deposit: data.has_deposit || false,
       deposit_status: data.deposit_status || '无', deposit_amount: data.deposit_amount || 0,
       deposit_date: data.deposit_date, deposit_return_date: data.deposit_return_date,
@@ -624,10 +725,11 @@ async function loadProject() {
     const rawCompetitors = parseJson(data.competitors, [])
     resultForm.value = {
       competitors: rawCompetitors.map(c => ({
-        org_id: c.org_id || null,
+        org_ids: c.org_ids || (c.org_id ? [c.org_id] : []),
         price: c.price || 0,
         score: c.score || 0,
         is_shortlisted: c.is_shortlisted || false,
+        is_winning: c.is_winning || false,
       })),
       scoring_details: parseJson(data.scoring_details, []),
       result_deposit_status: data.result_deposit_status || (data.has_deposit && data.deposit_status === '已缴纳' && statusGte(data.status, '已投标') ? '未收回' : null),
@@ -680,7 +782,8 @@ function collectSaveData() {
     Object.assign(data, {
       ...resultForm.value,
       competitors: resultForm.value.competitors.map(c => ({
-        org_id: c.org_id, price: c.price, score: c.score, is_shortlisted: c.is_shortlisted,
+        org_ids: c.org_ids, price: c.price, score: c.score,
+        is_shortlisted: c.is_shortlisted, is_winning: c.is_winning,
       })),
       scoring_details: resultForm.value.scoring_details,
     })
