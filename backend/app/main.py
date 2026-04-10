@@ -55,6 +55,14 @@ def on_startup():
             conn.commit()
         print("Migration: added parent_project_id column to project_infos")
 
+    # Auto-migrate: add is_bid_failed column to project_infos if not exists
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'is_bid_failed' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN is_bid_failed BOOLEAN DEFAULT 0"))
+            conn.commit()
+        print("Migration: added is_bid_failed column to project_infos")
+
     # Create default admin user
     from sqlalchemy.orm import Session
     from .models.user import User

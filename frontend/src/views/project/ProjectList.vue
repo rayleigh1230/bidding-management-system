@@ -5,10 +5,13 @@
       <el-button :type="activeStatus === '' ? 'primary' : ''" @click="setStatus('')">全部</el-button>
       <el-button :type="activeStatus === '跟进中' ? 'primary' : ''" @click="setStatus('跟进中')">跟进中</el-button>
       <el-button :type="activeStatus === '已发公告' ? 'primary' : ''" @click="setStatus('已发公告')">已发公告</el-button>
+      <el-button :type="activeStatus === '未报名' ? 'primary' : ''" @click="setStatus('未报名')">未报名</el-button>
+      <el-button :type="activeStatus === '已报名' ? 'primary' : ''" @click="setStatus('已报名')">已报名</el-button>
       <el-button :type="activeStatus === '准备投标' ? 'primary' : ''" @click="setStatus('准备投标')">准备投标</el-button>
       <el-button :type="activeStatus === '已投标' ? 'primary' : ''" @click="setStatus('已投标')">已投标</el-button>
       <el-button :type="activeStatus === '已中标' ? 'success' : ''" @click="setStatus('已中标')">已中标</el-button>
       <el-button :type="activeStatus === '未中标' ? 'danger' : ''" @click="setStatus('未中标')">未中标</el-button>
+      <el-button :type="activeStatus === '已流标' ? 'warning' : ''" @click="setStatus('已流标')">已流标</el-button>
     </div>
 
     <div style="display: flex; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px">
@@ -28,7 +31,7 @@
             <el-button><el-icon><Setting /></el-icon> 列设置</el-button>
           </template>
           <div style="max-height: 400px; overflow-y: auto; padding: 4px 0">
-            <el-checkbox-group v-model="selectedColumnKeys" @change="saveColumnConfig">
+            <el-checkbox-group v-model="selectedColumnKeys">
               <div v-for="col in configurableColumns" :key="col.key" style="padding: 2px 0">
                 <el-checkbox :value="col.key">{{ col.label }}</el-checkbox>
               </div>
@@ -60,7 +63,7 @@
         </el-table-column>
         <!-- 负责人 -->
         <el-table-column v-else-if="col.key === 'manager_names'" prop="manager_names" label="负责人" width="90" show-overflow-tooltip>
-          <template #default="{ row }">{{ (row.manager_names || []).join(', ') }}</template>
+          <template #default="{ row }">{{ (row.manager_names || []).join(', ') || '-' }}</template>
         </el-table-column>
         <!-- 所属地区 -->
         <el-table-column v-else-if="col.key === 'region'" label="所属地区" width="110" show-overflow-tooltip>
@@ -81,14 +84,6 @@
         <el-table-column v-else-if="col.key === 'created_at'" prop="created_at" label="创建时间" width="150">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
-        <!-- 是否中标 -->
-        <el-table-column v-else-if="col.key === 'is_won'" label="是否中标" width="80">
-          <template #default="{ row }">
-            <el-tag v-if="row.is_won === true" size="small" type="success">已中标</el-tag>
-            <el-tag v-else-if="row.is_won === false && row.status !== '已投标'" size="small" type="danger">未中标</el-tag>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
         <!-- 保证金状态 -->
         <el-table-column v-else-if="col.key === 'deposit_status_display'" label="保证金状态" width="90">
           <template #default="{ row }">
@@ -107,6 +102,10 @@
         <el-table-column v-else-if="col.key === 'partner_names'" label="合作单位" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ (row.partner_names || []).join(', ') || '-' }}</template>
         </el-table-column>
+        <!-- 中标单位 -->
+        <el-table-column v-else-if="col.key === 'winning_org_names'" label="中标单位" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ (row.winning_org_names || []).join(', ') || '-' }}</template>
+        </el-table-column>
         <!-- 操作 -->
         <el-table-column v-else-if="col.key === 'actions'" label="操作" width="100">
           <template #default="{ row }">
@@ -119,7 +118,9 @@
           </template>
         </el-table-column>
         <!-- 通用文本列 -->
-        <el-table-column v-else :prop="col.prop || col.key" :label="col.label" :width="col.width" show-overflow-tooltip />
+        <el-table-column v-else :prop="col.prop || col.key" :label="col.label" :width="col.width" show-overflow-tooltip>
+          <template #default="{ row }">{{ row[col.prop || col.key] || '-' }}</template>
+        </el-table-column>
       </template>
     </el-table>
 
@@ -136,7 +137,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Setting } from '@element-plus/icons-vue'
 import { getProjects, deleteProject } from '../../api/project'
@@ -162,11 +163,10 @@ const allColumns = [
   { key: 'control_price_type', label: '控制价类型', width: 100, alwaysShow: false, defaultShow: false, prop: 'control_price_type' },
   { key: 'partner_names', label: '合作单位', width: 120, alwaysShow: false, defaultShow: false },
   { key: 'bid_method', label: '投标方式', width: 90, alwaysShow: false, defaultShow: false, prop: 'bid_method' },
-  { key: 'bid_status', label: '投标状态', width: 90, alwaysShow: false, defaultShow: false, prop: 'bid_status' },
   { key: 'our_price_display', label: '我方报价', width: 90, alwaysShow: false, defaultShow: true, prop: 'our_price_display' },
-  { key: 'is_won', label: '是否中标', width: 80, alwaysShow: false, defaultShow: false },
   { key: 'deposit_status_display', label: '保证金状态', width: 90, alwaysShow: false, defaultShow: true },
   { key: 'deposit_amount', label: '保证金', width: 100, alwaysShow: false, defaultShow: false },
+  { key: 'winning_org_names', label: '中标单位', width: 140, alwaysShow: false, defaultShow: true },
   { key: 'winning_amount_display', label: '中标金额', width: 100, alwaysShow: false, defaultShow: false, prop: 'winning_amount_display' },
   { key: 'created_at', label: '创建时间', width: 150, alwaysShow: false, defaultShow: true },
   { key: 'actions', label: '操作', width: 100, alwaysShow: true, defaultShow: true },
@@ -194,9 +194,13 @@ function saveColumnConfig(keys) {
   localStorage.setItem(getStorageKey(), JSON.stringify(keys))
 }
 
+// 用 watch 确保任何变化都保存（比 @change 更可靠）
+watch(selectedColumnKeys, (newKeys) => {
+  saveColumnConfig(newKeys)
+}, { deep: true })
+
 function resetColumns() {
   selectedColumnKeys.value = [...defaultKeys]
-  saveColumnConfig(selectedColumnKeys.value)
 }
 
 const alwaysShowKeys = computed(() => allColumns.filter(c => c.alwaysShow).map(c => c.key))
@@ -219,16 +223,19 @@ const filters = reactive({ keyword: '', status: '', bidding_type: '' })
 const statusMap = {
   '跟进中': { label: '跟进中', type: 'info' },
   '已发公告': { label: '已发公告', type: 'primary' },
+  '未报名': { label: '未报名', type: 'info' },
+  '已报名': { label: '已报名', type: 'success' },
   '准备投标': { label: '准备投标', type: 'warning' },
   '已投标': { label: '已投标', type: 'primary' },
   '已中标': { label: '已中标', type: 'success' },
   '未中标': { label: '未中标', type: 'danger' },
+  '已流标': { label: '已流标', type: 'warning' },
   '已放弃': { label: '已放弃', type: 'info' },
 }
 
 function statusLabel(s) { return statusMap[s]?.label || s }
 function statusType(s) { return statusMap[s]?.type || 'info' }
-function formatTime(t) { return t ? t.replace('T', ' ').slice(0, 16) : '' }
+function formatTime(t) { return t ? t.replace('T', ' ').slice(0, 16) : '-' }
 function formatDate(d) { return d || '-' }
 function formatRegion(r) {
   if (!r) return '-'

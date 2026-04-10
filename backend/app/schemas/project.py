@@ -57,6 +57,8 @@ class ProjectUpdate(BaseModel):
     scoring_details: Optional[list[dict]] = None
     result_deposit_status: Optional[str] = None
     is_won: Optional[bool] = None
+    is_bid_failed: Optional[bool] = None
+    is_registered: Optional[bool] = None  # 虚拟字段，不存DB
     winning_org_id: Optional[int] = None
     winning_org_ids: Optional[list[int]] = None
     winning_price: Optional[float] = None
@@ -116,6 +118,8 @@ class ProjectResponse(BaseModel):
     scoring_details: Any = []
     result_deposit_status: Optional[str] = None
     is_won: bool = False
+    is_bid_failed: bool = False
+    is_registered: bool = False  # 虚拟字段，从 status 推导
     winning_org_id: Optional[int] = None
     winning_org_ids: Any = []
     winning_price: Optional[float] = None

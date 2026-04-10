@@ -93,12 +93,15 @@
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="报名截止">
-                <el-date-picker v-model="biddingForm.registration_deadline" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+                <div style="display: flex; align-items: center; gap: 12px; width: 100%">
+                  <el-date-picker v-model="biddingForm.registration_deadline" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" style="flex: 1" />
+                  <el-checkbox v-if="biddingForm.registration_deadline" v-model="biddingForm.is_registered">已报名</el-checkbox>
+                </div>
               </el-form-item>
             </el-col>
             <el-col :span="12">
               <el-form-item label="投标截止">
-                <el-date-picker v-model="biddingForm.bid_deadline" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+                <el-date-picker v-model="biddingForm.bid_deadline" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -165,15 +168,6 @@
         <el-form :model="bidForm" label-width="100px">
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="投标状态">
-                <el-select v-model="bidForm.bid_status" style="width: 100%">
-                  <el-option label="未报名" value="未报名" />
-                  <el-option label="已报名" value="已报名" />
-                  <el-option label="已投标" value="已投标" />
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :span="12">
               <el-form-item label="投标方式">
                 <el-select v-model="bidForm.bid_method" style="width: 100%">
                   <el-option label="独立" value="独立" />
@@ -212,7 +206,7 @@
                   <el-input-number v-model="bidForm.deposit_amount" :min="0" :precision="2" :controls="false" style="width: 140px" />
                   <span style="margin-left: 4px; color: #999; white-space: nowrap">元</span>
                 </div>
-                <el-date-picker v-model="bidForm.deposit_date" type="date" value-format="YYYY-MM-DD" placeholder="缴纳日期" style="width: 160px" />
+                <el-date-picker v-model="bidForm.deposit_date" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" placeholder="缴纳日期" style="width: 160px" />
                 <el-checkbox v-model="depositPaid">已缴纳</el-checkbox>
               </div>
             </el-form-item>
@@ -227,11 +221,12 @@
       <el-card v-if="showResult">
         <template #header><span>投标结果</span></template>
         <el-form :model="resultForm" label-width="100px">
-          <!-- 是否中标 -->
-          <el-form-item label="是否中标">
-            <el-radio-group v-model="resultForm.is_won">
-              <el-radio :label="true">已中标</el-radio>
-              <el-radio :label="false">未中标</el-radio>
+          <!-- 投标结果 -->
+          <el-form-item label="投标结果">
+            <el-radio-group :model-value="bidResultType" @change="handleBidResultChange">
+              <el-radio value="won">已中标</el-radio>
+              <el-radio value="lost">未中标</el-radio>
+              <el-radio value="failed">流标</el-radio>
             </el-radio-group>
           </el-form-item>
 
@@ -268,7 +263,7 @@
               <!-- 评分 -->
               <el-input-number v-model="comp.score" :min="0" :precision="1" :controls="false" placeholder="评分" style="width: 80px" />
               <!-- 中标勾选 -->
-              <el-checkbox v-model="comp.is_winning" @change="handleWinningChange(comp)">中标</el-checkbox>
+              <el-checkbox v-model="comp.is_winning" :disabled="resultForm.is_bid_failed" @change="handleWinningChange(comp)">中标</el-checkbox>
               <!-- 删除按钮（我方条目不可删除） -->
               <el-button v-if="!isOurEntry(comp)" type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
@@ -290,7 +285,7 @@
             </el-col>
             <el-col v-if="resultForm.result_deposit_status === '已收回'" :span="12">
               <el-form-item label="退回日期">
-                <el-date-picker v-model="bidForm.deposit_return_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+                <el-date-picker v-model="bidForm.deposit_return_date" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -369,7 +364,7 @@
           </template>
 
           <!-- 未中标专属 -->
-          <template v-if="!resultForm.is_won">
+          <template v-if="resultForm.is_won === false && !resultForm.is_bid_failed">
             <el-form-item label="未中标分析">
               <el-input v-model="resultForm.lost_analysis" type="textarea" :rows="3" placeholder="分析未中标原因" />
             </el-form-item>
@@ -394,7 +389,7 @@
       <template v-if="!isNew">
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
         <el-button v-if="isFollowing" type="success" @click="handlePublish">已发公告</el-button>
-        <el-button v-if="isPublished" type="warning" @click="handlePrepare">准备投标</el-button>
+        <el-button v-if="isPublished || isNotRegistered || isRegistered" type="warning" @click="handlePrepare">准备投标</el-button>
         <el-button v-if="isPreparing" type="primary" @click="handleSubmit">提交投标</el-button>
         <el-button v-if="canAbandon" type="danger" @click="showAbandonDialog = true">放弃</el-button>
       </template>
@@ -445,7 +440,7 @@ const parentProjectOptions = ref([])  // 远程搜索入围标项目选项
 const isNew = computed(() => route.params.id === 'new')
 
 // ---- Status computed ----
-const statusOrder = ['跟进中', '已发公告', '准备投标', '已投标', '已中标', '未中标', '已放弃']
+const statusOrder = ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标', '已中标', '未中标', '已流标', '已放弃']
 function statusGte(current, target) {
   return statusOrder.indexOf(current) >= statusOrder.indexOf(target)
 }
@@ -453,9 +448,11 @@ function statusGte(current, target) {
 const project = ref({})
 const isFollowing = computed(() => project.value.status === '跟进中')
 const isPublished = computed(() => project.value.status === '已发公告')
+const isNotRegistered = computed(() => project.value.status === '未报名')
+const isRegistered = computed(() => project.value.status === '已报名')
 const isPreparing = computed(() => project.value.status === '准备投标')
 const isAbandoned = computed(() => project.value.status === '已放弃')
-const canAbandon = computed(() => ['跟进中', '已发公告', '准备投标', '已投标'].includes(project.value.status))
+const canAbandon = computed(() => ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标'].includes(project.value.status))
 const showBidding = computed(() => !isNew.value && statusGte(project.value.status, '已发公告'))
 const showBid = computed(() => !isNew.value && statusGte(project.value.status, '准备投标'))
 const showResult = computed(() => !isNew.value && statusGte(project.value.status, '已投标'))
@@ -464,10 +461,13 @@ const controlPriceType = computed(() => biddingForm.value.control_price_type || 
 const statusMap = {
   '跟进中': { label: '跟进中', type: 'info' },
   '已发公告': { label: '已发公告', type: 'primary' },
+  '未报名': { label: '未报名', type: 'info' },
+  '已报名': { label: '已报名', type: 'success' },
   '准备投标': { label: '准备投标', type: 'warning' },
   '已投标': { label: '已投标', type: 'primary' },
   '已中标': { label: '已中标', type: 'success' },
   '未中标': { label: '未中标', type: 'danger' },
+  '已流标': { label: '已流标', type: 'warning' },
   '已放弃': { label: '已放弃', type: 'info' },
 }
 function statusLabel(s) { return statusMap[s]?.label || s }
@@ -502,11 +502,12 @@ const defaultBiddingForm = {
   registration_deadline: null, bid_deadline: null, budget_amount: 0,
   control_price_type: '金额', control_price_upper: null, control_price_lower: null,
   is_prequalification: false, bid_specialist_id: null, bidding_notes: '',
+  is_registered: false,
 }
 const biddingForm = ref({ ...defaultBiddingForm })
 
 const defaultBidForm = {
-  partner_ids: [], bid_method: '独立', is_consortium_lead: true, bid_status: '未报名',
+  partner_ids: [], bid_method: '独立', is_consortium_lead: true,
   has_deposit: false, deposit_status: '未缴纳', deposit_amount: 0,
   deposit_date: null, deposit_return_date: null, our_price: 0, bid_notes: '',
 }
@@ -514,7 +515,7 @@ const bidForm = ref({ ...defaultBidForm })
 
 const defaultResultForm = {
   competitors: [], scoring_details: [], result_deposit_status: null,
-  is_won: false, winning_org_id: null, winning_org_ids: [], winning_price: null, winning_amount: null,
+  is_won: false, is_bid_failed: false, winning_org_id: null, winning_org_ids: [], winning_price: null, winning_amount: null,
   lost_analysis: '', contract_number: '', contract_status: '无', contract_amount: 0, result_notes: '',
 }
 const resultForm = ref({ ...defaultResultForm })
@@ -542,9 +543,34 @@ function getOurOrgId() {
 
 // ---- Winning logic ----
 
+const bidResultType = computed(() => {
+  if (resultForm.value.is_bid_failed) return 'failed'
+  if (resultForm.value.is_won) return 'won'
+  // is_won=false 但状态还在已投标 → 视为未选择
+  if (project.value.status === '已投标') return null
+  return 'lost'
+})
+
+function handleBidResultChange(val) {
+  if (val === 'won') {
+    resultForm.value.is_won = true
+    resultForm.value.is_bid_failed = false
+  } else if (val === 'lost') {
+    resultForm.value.is_won = false
+    resultForm.value.is_bid_failed = false
+  } else if (val === 'failed') {
+    resultForm.value.is_won = false
+    resultForm.value.is_bid_failed = true
+    // 流标时取消所有中标勾选
+    resultForm.value.competitors.forEach(c => { c.is_winning = false })
+    deriveWinningOrgs()
+  }
+}
+
 let _updatingFromWinning = false
 
 function handleWinningChange(comp) {
+  if (resultForm.value.is_bid_failed) return  // 流标时忽略
   const isPrequalification = biddingForm.value.is_prequalification
   if (!isPrequalification) {
     // 非入围标：单选行为
@@ -733,6 +759,7 @@ watch(() => resultForm.value.is_won, (newVal) => {
     _updatingFromWinning = false
     return
   }
+  if (newVal === null) return  // 未选择，不操作
   const ourOrgId = getOurOrgId()
   if (!ourOrgId) return
   const ourComp = resultForm.value.competitors.find(c => c.org_ids.includes(ourOrgId))
@@ -813,19 +840,21 @@ async function loadProject() {
       control_price_upper: data.control_price_upper, control_price_lower: data.control_price_lower,
       is_prequalification: data.is_prequalification || false, bid_specialist_id: data.bid_specialist_id,
       bidding_notes: data.bidding_notes || '',
+      is_registered: data.is_registered || (statusGte(data.status, '准备投标') && !!data.registration_deadline),
     }
 
     // Fill bid form
     bidForm.value = {
       partner_ids: parseJson(data.partner_ids, []), bid_method: data.bid_method || '独立',
       is_consortium_lead: data.is_consortium_lead !== false,
-      bid_status: data.bid_status || '未报名', has_deposit: data.has_deposit || false,
+      has_deposit: data.has_deposit || false,
       deposit_status: data.deposit_status || '无', deposit_amount: data.deposit_amount || 0,
       deposit_date: data.deposit_date, deposit_return_date: data.deposit_return_date,
       our_price: data.our_price || 0, bid_notes: data.bid_notes || '',
     }
 
-    // Fill result form
+    // Fill result form (use _updatingFromWinning to prevent watcher interference)
+    _updatingFromWinning = true
     const rawCompetitors = parseJson(data.competitors, [])
     resultForm.value = {
       competitors: rawCompetitors.map(c => ({
@@ -838,6 +867,7 @@ async function loadProject() {
       scoring_details: parseJson(data.scoring_details, []),
       result_deposit_status: data.result_deposit_status || (data.has_deposit && data.deposit_status === '已缴纳' && statusGte(data.status, '已投标') ? '未收回' : null),
       is_won: data.is_won || false,
+      is_bid_failed: data.is_bid_failed || false,
       winning_org_id: data.winning_org_id,
       winning_org_ids: parseJson(data.winning_org_ids, []),
       winning_price: data.winning_price, winning_amount: data.winning_amount,
@@ -845,11 +875,13 @@ async function loadProject() {
       contract_status: data.contract_status || '无', contract_amount: data.contract_amount || 0,
       result_notes: data.result_notes || '',
     }
+    // Reset flag after next tick so watcher processes normally from here on
+    await nextTick()
+    _updatingFromWinning = false
   } catch {
     ElMessage.error('项目不存在')
     router.push('/projects')
   }
-  await nextTick()
   ensureOurCompanyInCompetitors()
 }
 

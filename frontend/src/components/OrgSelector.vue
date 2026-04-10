@@ -57,7 +57,14 @@ const emit = defineEmits(['update:modelValue', 'change'])
 
 const options = ref([])
 const excludeSet = computed(() => new Set(props.excludeIds))
-const filteredOptions = computed(() => options.value.filter(o => !excludeSet.value.has(o.id)))
+const selectedSet = computed(() => {
+  const v = props.modelValue
+  return new Set(Array.isArray(v) ? v : (v != null ? [v] : []))
+})
+// Always include options for currently selected values so el-select can display names
+const filteredOptions = computed(() =>
+  options.value.filter(o => !excludeSet.value.has(o.id) || selectedSet.value.has(o.id))
+)
 const loading = ref(false)
 const showDialog = ref(false)
 const submitting = ref(false)

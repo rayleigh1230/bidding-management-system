@@ -17,10 +17,13 @@ class BiddingType(str, enum.Enum):
 class ProjectStatus(str, enum.Enum):
     following = "跟进中"
     published = "已发公告"
+    not_registered = "未报名"
+    registered = "已报名"
     preparing = "准备投标"
     submitted = "已投标"
     won = "已中标"
     lost = "未中标"
+    failed_bid = "已流标"
     abandoned = "已放弃"
 
 
@@ -115,6 +118,7 @@ class ProjectInfo(Base):
     scoring_details: Mapped[str] = mapped_column(JSON, default=[])
     result_deposit_status: Mapped[str] = mapped_column(Enum(ResultDepositStatus), nullable=True)
     is_won: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_bid_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     winning_org_id: Mapped[int] = mapped_column(Integer, ForeignKey("organizations.id"), nullable=True)
     winning_org_ids: Mapped[str] = mapped_column(JSON, default=[])
     winning_price: Mapped[float] = mapped_column(Numeric(15, 2), nullable=True)

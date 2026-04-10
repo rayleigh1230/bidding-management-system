@@ -241,7 +241,7 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     # deposit_status_display: 根据状态显示不同阶段的保证金状态
     if not project.has_deposit:
         data["deposit_status_display"] = "无"
-    elif project.status in (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost):
+    elif project.status in (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost, ProjectStatus.failed_bid):
         # 已投标及之后：显示收回状态
         if project.result_deposit_status:
             data["deposit_status_display"] = project.result_deposit_status.value
@@ -250,6 +250,9 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     else:
         # 准备投标及之前：显示缴纳状态
         data["deposit_status_display"] = project.deposit_status.value if project.deposit_status else "无"
+
+    # is_registered: 虚拟字段，从 status 推导
+    data["is_registered"] = (project.status == ProjectStatus.registered)
 
     return data
 
@@ -361,58 +364,62 @@ def update_project(
         raise HTTPException(status_code=400, detail="没有需要更新的字段")
 
     for field, value in update_data.items():
+        if field == "is_registered":
+            continue  # 虚拟字段，不写入 DB
         if field in _JSON_LIST_FIELDS and isinstance(value, list):
             value = json.dumps(value, ensure_ascii=False)
         setattr(project, field, value)
 
-    # Auto-calculate winning info from competitors when is_won changes
-    # Only when project is in "已投标" status
-    if "is_won" in update_data and project.status == ProjectStatus.submitted:
-        control_type = _control_type_str(project.control_price_type)
-        is_shortlisting = project.is_prequalification  # 入围标
+    # ---- 报名状态推导（已发公告/未报名/已报名之间） ----
+    if project.status in (ProjectStatus.published, ProjectStatus.not_registered, ProjectStatus.registered):
+        if "registration_deadline" in update_data or "is_registered" in update_data:
+            is_registered = update_data.get("is_registered", project.status == ProjectStatus.registered)
+            has_deadline = bool(project.registration_deadline) or bool(update_data.get("registration_deadline"))
+            if has_deadline and is_registered:
+                project.status = ProjectStatus.registered
+            elif has_deadline:
+                project.status = ProjectStatus.not_registered
+            else:
+                project.status = ProjectStatus.published
 
-        # Extract winning info from competitors
-        raw_comps = project.competitors
-        if isinstance(raw_comps, str):
-            try:
-                raw_comps = json.loads(raw_comps)
-            except (json.JSONDecodeError, TypeError):
-                raw_comps = []
+    # ---- 投标结果状态推导（is_won / is_bid_failed → 已中标/未中标/已流标） ----
+    result_statuses = (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost, ProjectStatus.failed_bid)
+    if project.status in result_statuses and ("is_won" in update_data or "is_bid_failed" in update_data):
+        if project.is_bid_failed:
+            # 流标：强制 is_won=false，状态→已流标
+            project.is_won = False
+            project.status = ProjectStatus.failed_bid
+        elif project.is_won:
+            # 已中标：推导 winning 信息
+            control_type = _control_type_str(project.control_price_type)
+            is_shortlisting = project.is_prequalification
+            raw_comps = project.competitors
+            if isinstance(raw_comps, str):
+                try:
+                    raw_comps = json.loads(raw_comps)
+                except (json.JSONDecodeError, TypeError):
+                    raw_comps = []
 
-        winning_entries = []
-        for c in raw_comps:
-            if isinstance(c, dict) and c.get("is_winning"):
-                winning_entries.append(c)
+            winning_entries = [c for c in raw_comps if isinstance(c, dict) and c.get("is_winning")]
+            derived_org_ids = []
+            for entry in winning_entries:
+                org_ids = entry.get("org_ids", [])
+                if not org_ids and entry.get("org_id"):
+                    org_ids = [entry["org_id"]]
+                derived_org_ids.extend(org_ids)
 
-        # Derive winning_org_ids from winning competitors
-        derived_org_ids = []
-        for entry in winning_entries:
-            org_ids = entry.get("org_ids", [])
-            if not org_ids and entry.get("org_id"):
-                org_ids = [entry["org_id"]]
-            derived_org_ids.extend(org_ids)
+            if derived_org_ids:
+                seen = set()
+                unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
+                project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
+                project.winning_org_id = unique_ids[0] if unique_ids else None
+            else:
+                project.winning_org_ids = json.dumps([], ensure_ascii=False)
+                project.winning_org_id = None
 
-        if derived_org_ids:
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_ids = []
-            for oid in derived_org_ids:
-                if oid not in seen:
-                    seen.add(oid)
-                    unique_ids.append(oid)
-            project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
-            # backward compat
-            project.winning_org_id = unique_ids[0] if unique_ids else None
-        else:
-            project.winning_org_ids = json.dumps([], ensure_ascii=False)
-            project.winning_org_id = None
-
-        if project.is_won:
             if is_shortlisting:
-                # 入围标：不自动计算，保持前端传入的手动值
                 project.status = ProjectStatus.won
             else:
-                # 非入围标：从 winning competitors 推导 winning_price/winning_amount
                 if winning_entries:
                     wp = winning_entries[0].get("price", 0)
                     if wp:
@@ -425,23 +432,46 @@ def update_project(
                                 wp, control_type, project.control_price_upper, project.budget_amount
                             )
                 project.status = ProjectStatus.won
-        else:
-            if is_shortlisting:
-                project.status = ProjectStatus.lost
+        elif not project.is_won:
+            # 未中标（is_won=False 且 is_bid_failed=False）
+            control_type = _control_type_str(project.control_price_type)
+            is_shortlisting = project.is_prequalification
+            raw_comps = project.competitors
+            if isinstance(raw_comps, str):
+                try:
+                    raw_comps = json.loads(raw_comps)
+                except (json.JSONDecodeError, TypeError):
+                    raw_comps = []
+
+            winning_entries = [c for c in raw_comps if isinstance(c, dict) and c.get("is_winning")]
+            derived_org_ids = []
+            for entry in winning_entries:
+                org_ids = entry.get("org_ids", [])
+                if not org_ids and entry.get("org_id"):
+                    org_ids = [entry["org_id"]]
+                derived_org_ids.extend(org_ids)
+
+            if derived_org_ids:
+                seen = set()
+                unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
+                project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
+                project.winning_org_id = unique_ids[0] if unique_ids else None
             else:
-                # 非入围标未中标：从 winning competitors 推导
-                if winning_entries:
-                    wp = winning_entries[0].get("price", 0)
-                    if wp:
-                        if control_type == "金额":
-                            project.winning_price = None
-                            project.winning_amount = wp
-                        else:
-                            project.winning_price = wp
-                            project.winning_amount = _calc_winning_amount(
-                                wp, control_type, project.control_price_upper, project.budget_amount
-                            )
-                project.status = ProjectStatus.lost
+                project.winning_org_ids = json.dumps([], ensure_ascii=False)
+                project.winning_org_id = None
+
+            if not is_shortlisting and winning_entries:
+                wp = winning_entries[0].get("price", 0)
+                if wp:
+                    if control_type == "金额":
+                        project.winning_price = None
+                        project.winning_amount = wp
+                    else:
+                        project.winning_price = wp
+                        project.winning_amount = _calc_winning_amount(
+                            wp, control_type, project.control_price_upper, project.budget_amount
+                        )
+            project.status = ProjectStatus.lost
 
     log_operation(db, current_user.id, "update", "project", project.id, f"更新项目: {project.project_name}")
     db.commit()
@@ -540,8 +570,8 @@ def prepare_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    if project.status != ProjectStatus.published:
-        raise HTTPException(status_code=400, detail="只有已发公告的项目才能准备投标")
+    if project.status not in (ProjectStatus.published, ProjectStatus.not_registered, ProjectStatus.registered):
+        raise HTTPException(status_code=400, detail="只有已发公告/未报名/已报名的项目才能准备投标")
 
     project.status = ProjectStatus.preparing
     log_operation(db, current_user.id, "advance", "project", project.id, f"准备投标: {project.project_name}")

@@ -33,7 +33,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getPlatforms, createPlatform } from '../api/dict'
 
@@ -52,10 +52,20 @@ const form = ref({ name: '', url: '' })
 const rules = { name: [{ required: true, message: '请输入平台名称', trigger: 'blur' }] }
 
 let searchTimer = null
+let loaded = false
+
+async function preloadOptions() {
+  if (loaded) return
+  loaded = true
+  try {
+    const res = await getPlatforms({ page_size: 100 })
+    options.value = res.items
+  } catch { /* ignore */ }
+}
 
 async function handleSearch(query) {
   clearTimeout(searchTimer)
-  if (!query) { options.value = []; return }
+  if (!query) { return }
   searchTimer = setTimeout(async () => {
     loading.value = true
     try {
@@ -91,5 +101,9 @@ function handleChange(val) {
   emit('change', selected || null)
 }
 
-onMounted(() => handleSearch(''))
+onMounted(() => preloadOptions())
+
+watch(() => props.modelValue, (val) => {
+  if (val && !loaded) preloadOptions()
+}, { immediate: true })
 </script>
