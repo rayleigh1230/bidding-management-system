@@ -35,3 +35,7 @@ export function submitProject(id) {
 export function abandonProject(id, reason) {
   return request.post(`/projects/${id}/abandon`, { reason })
 }
+
+export function syncCompetitors(id) {
+  return request.post(`/projects/${id}/sync-competitors`)
+}

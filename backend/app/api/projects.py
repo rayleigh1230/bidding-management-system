@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -230,6 +231,13 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     data["winning_price_display"] = display["winning_price_display"]
     data["winning_amount_display"] = display["winning_amount_display"]
 
+    # parent_project_name
+    if project.parent_project_id:
+        parent = db.query(ProjectInfo).filter(ProjectInfo.id == project.parent_project_id).first()
+        data["parent_project_name"] = parent.project_name if parent else None
+    else:
+        data["parent_project_name"] = None
+
     # deposit_status_display: 根据状态显示不同阶段的保证金状态
     if not project.has_deposit:
         data["deposit_status_display"] = "无"
@@ -259,6 +267,7 @@ def list_projects(
     status: str = Query("", description="项目状态"),
     bidding_type: str = Query("", description="招标类型"),
     region: str = Query("", description="地区"),
+    is_prequalification: Optional[bool] = Query(None, description="是否入围标"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     db: Session = Depends(get_db),
@@ -279,6 +288,8 @@ def list_projects(
         query = query.filter(ProjectInfo.bidding_type == bidding_type)
     if region:
         query = query.filter(ProjectInfo.region.contains(region))
+    if is_prequalification is not None:
+        query = query.filter(ProjectInfo.is_prequalification == is_prequalification)
 
     total = query.count()
     items = (
@@ -311,6 +322,7 @@ def create_project(
         manager_ids=json.dumps(data.manager_ids, ensure_ascii=False) if data.manager_ids else [],
         status=ProjectStatus.following,
         description=data.description,
+        parent_project_id=data.parent_project_id,
         created_by=current_user.id,
     )
     db.add(project)
@@ -451,6 +463,52 @@ def delete_project(
     db.delete(project)
     db.commit()
     return {"message": "删除成功"}
+
+
+@router.post("/{project_id}/sync-competitors", response_model=dict)
+def sync_competitors(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """从父入围标项目同步参标单位到当前入围分项项目"""
+    project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not project.parent_project_id:
+        raise HTTPException(status_code=400, detail="该项目未关联父入围标项目")
+
+    parent = db.query(ProjectInfo).filter(ProjectInfo.id == project.parent_project_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="父入围标项目不存在")
+
+    # 复制父项目的 competitors（清理 is_winning 标志，保留 org_ids/price/score 结构）
+    raw_comps = parent.competitors
+    if isinstance(raw_comps, str):
+        try:
+            raw_comps = json.loads(raw_comps)
+        except (json.JSONDecodeError, TypeError):
+            raw_comps = []
+
+    synced = []
+    for c in raw_comps:
+        if not isinstance(c, dict):
+            continue
+        entry = {
+            "org_ids": c.get("org_ids", []),
+            "price": 0,  # 重置报价，入围分项的报价独立
+            "score": 0,
+            "is_shortlisted": False,
+            "is_winning": False,
+        }
+        synced.append(entry)
+
+    project.competitors = json.dumps(synced, ensure_ascii=False)
+    log_operation(db, current_user.id, "update", "project", project.id,
+                  f"从父项目(ID={parent.id})同步参标单位")
+    db.commit()
+    db.refresh(project)
+    return enrich_project(project, db)
 
 
 # ---- Flow endpoints (status changes only, no record creation) ----

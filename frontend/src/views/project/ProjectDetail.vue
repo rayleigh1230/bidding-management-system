@@ -5,6 +5,9 @@
         <template #content>
           <span>{{ isNew ? '新增项目' : project.project_name }}</span>
           <el-tag v-if="!isNew" :type="statusType(project.status)" style="margin-left: 8px">{{ statusLabel(project.status) }}</el-tag>
+          <el-link v-if="!isNew && projectForm.parent_project_id" type="info" :underline="false" style="margin-left: 8px; font-size: 12px" @click="$router.push(`/projects/${projectForm.parent_project_id}`)">
+            父项目：{{ parentProjectName }}
+          </el-link>
         </template>
       </el-page-header>
     </div>
@@ -32,6 +35,25 @@
               </el-form-item>
             </el-col>
           </el-row>
+          <el-form-item v-if="projectForm.bidding_type === '入围分项'" label="关联入围标">
+            <el-select
+              v-model="projectForm.parent_project_id"
+              filterable
+              remote
+              reserve-keyword
+              placeholder="搜索入围标项目"
+              :remote-method="searchParentProjects"
+              :disabled="!isNew && !isFollowing"
+              clearable
+              style="width: 100%"
+              @change="handleParentProjectChange"
+            >
+              <el-option v-for="p in parentProjectOptions" :key="p.id" :label="p.project_name" :value="p.id">
+                <span>{{ p.project_name }}</span>
+                <span style="float: right; color: #999; font-size: 12px">ID: {{ p.id }}</span>
+              </el-option>
+            </el-select>
+          </el-form-item>
           <el-form-item label="项目名称" prop="project_name">
             <el-input v-model="projectForm.project_name" :disabled="!isNew && !isFollowing" />
           </el-form-item>
@@ -119,7 +141,7 @@
           </el-row>
           <el-row :gutter="16">
             <el-col :span="12">
-              <el-form-item label="是否入围标">
+              <el-form-item v-if="projectForm.bidding_type !== '入围分项'" label="是否入围标">
                 <el-switch v-model="biddingForm.is_prequalification" />
               </el-form-item>
             </el-col>
@@ -250,7 +272,10 @@
               <!-- 删除按钮（我方条目不可删除） -->
               <el-button v-if="!isOurEntry(comp)" type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
-            <el-button type="primary" link @click="addCompetitor">+ 添加参标单位</el-button>
+            <div style="display: flex; gap: 12px; align-items: center">
+              <el-button type="primary" link @click="addCompetitor">+ 添加参标单位</el-button>
+              <el-button v-if="projectForm.parent_project_id" type="warning" link @click="doSyncCompetitors">从父项目同步参标单位</el-button>
+            </div>
           </el-form-item>
 
           <!-- 保证金状态（仅已缴纳时显示收回流程） -->
@@ -398,6 +423,7 @@ import { Delete } from '@element-plus/icons-vue'
 import {
   getProject, createProject, updateProject,
   publishProject, prepareProject, submitProject, abandonProject,
+  getProjects, syncCompetitors,
 } from '../../api/project'
 import { getUsers } from '../../api/user'
 import { getOrganizations } from '../../api/dict'
@@ -413,6 +439,8 @@ const showAbandonDialog = ref(false)
 const abandonReason = ref('')
 const users = ref([])
 const orgMap = ref({})  // id -> { id, name }
+const parentProjectName = ref('')
+const parentProjectOptions = ref([])  // 远程搜索入围标项目选项
 
 const isNew = computed(() => route.params.id === 'new')
 
@@ -462,7 +490,7 @@ const OUR_COMPANY_NAME = '浙江意诚检测有限公司'
 
 // ---- Forms ----
 const projectFormRef = ref(null)
-const defaultProjectForm = { bidding_type: '', project_name: '', bidding_unit_id: null, region: [], manager_ids: [], description: '' }
+const defaultProjectForm = { bidding_type: '', project_name: '', bidding_unit_id: null, region: [], manager_ids: [], description: '', parent_project_id: null }
 const projectForm = ref({ ...defaultProjectForm })
 const projectRules = {
   bidding_type: [{ required: true, message: '请选择招标类型', trigger: 'change' }],
@@ -591,6 +619,66 @@ function syncOrgToMap(org) {
   }
 }
 
+// ---- Parent project (入围分项关联入围标) ----
+
+async function searchParentProjects(keyword) {
+  try {
+    const res = await getProjects({
+      keyword: keyword || '',
+      is_prequalification: true,
+      status: '已中标',
+      page_size: 20,
+    })
+    parentProjectOptions.value = (res.items || []).map(p => ({ id: p.id, project_name: p.project_name }))
+  } catch { /* ignore */ }
+}
+
+async function handleParentProjectChange(parentId) {
+  if (!parentId) {
+    parentProjectName.value = ''
+    return
+  }
+  // 找到选中的项目名称
+  const found = parentProjectOptions.value.find(p => p.id === parentId)
+  parentProjectName.value = found ? found.project_name : ''
+  // 如果当前项目还没有参标单位，自动从父项目复制
+  if (!resultForm.value.competitors.length && showResult.value) {
+    await doSyncCompetitors()
+  }
+}
+
+async function doSyncCompetitors() {
+  if (!projectForm.value.parent_project_id) {
+    ElMessage.warning('请先关联入围标项目')
+    return
+  }
+  try {
+    const updated = await syncCompetitors(route.params.id)
+    // 更新本地的 competitors
+    const rawComps = updated.competitors || []
+    resultForm.value.competitors = rawComps.map(c => ({
+      org_ids: c.org_ids || [],
+      price: c.price || 0,
+      score: c.score || 0,
+      is_shortlisted: c.is_shortlisted || false,
+      is_winning: c.is_winning || false,
+    }))
+    // 同步新增的 org 到 orgMap
+    for (const c of rawComps) {
+      if (c.org_names) {
+        c.org_ids.forEach((oid, i) => {
+          if (oid && !orgMap.value[oid] && c.org_names[i]) {
+            orgMap.value[oid] = { id: oid, name: c.org_names[i] }
+          }
+        })
+      }
+    }
+    ElMessage.success('参标单位已从父项目同步')
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '同步失败')
+  }
+}
+
 function getExcludedOrgIds(currentIdx) {
   const ids = []
   resultForm.value.competitors.forEach((c, i) => {
@@ -708,6 +796,12 @@ async function loadProject() {
       bidding_type: data.bidding_type, project_name: data.project_name,
       bidding_unit_id: data.bidding_unit_id, region, manager_ids: managerIds,
       description: data.description || '',
+      parent_project_id: data.parent_project_id || null,
+    }
+    parentProjectName.value = data.parent_project_name || ''
+    if (data.parent_project_id) {
+      // 预加载父项目选项，确保 select 能显示名称
+      parentProjectOptions.value = [{ id: data.parent_project_id, project_name: data.parent_project_name || `项目 #${data.parent_project_id}` }]
     }
 
     // Fill bidding form

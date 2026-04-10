@@ -11,6 +11,7 @@ class ProjectCreate(BaseModel):
     region: str = ""
     manager_ids: list[int] = []
     description: str = ""
+    parent_project_id: Optional[int] = None
 
 
 class ProjectUpdate(BaseModel):
@@ -23,6 +24,7 @@ class ProjectUpdate(BaseModel):
     manager_ids: Optional[list[int]] = None
     description: Optional[str] = None
     abandon_reason: Optional[str] = None
+    parent_project_id: Optional[int] = None
     # Section 2: 招标信息
     agency_id: Optional[int] = None
     publish_platform_id: Optional[int] = None
@@ -78,6 +80,7 @@ class ProjectResponse(BaseModel):
     status: str
     description: str
     abandon_reason: str
+    parent_project_id: Optional[int] = None
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
@@ -123,6 +126,7 @@ class ProjectResponse(BaseModel):
     contract_amount: float = 0
     result_notes: str = ""
     # Enriched fields
+    parent_project_name: Optional[str] = None
     bidding_unit_name: Optional[str] = None
     manager_names: Optional[list[str]] = None
     agency_name: Optional[str] = None

@@ -76,6 +76,7 @@ class ProjectInfo(Base):
     status: Mapped[str] = mapped_column(Enum(ProjectStatus), default=ProjectStatus.following)
     description: Mapped[str] = mapped_column(Text, default="")
     abandon_reason: Mapped[str] = mapped_column(Text, default="")
+    parent_project_id: Mapped[int] = mapped_column(Integer, ForeignKey("project_infos.id"), nullable=True)
     created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)

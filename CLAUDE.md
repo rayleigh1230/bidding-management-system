@@ -54,7 +54,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 
 | Section | Columns cover | Visible when |
 |---------|--------------|-------------|
-| 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, etc. | Always |
+| 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, parent_project_id (入围分项关联父入围标), etc. | Always |
 | 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, is_prequalification (是否入围标), etc. | status >= 已发公告 |
 | 投标信息 | partner_ids, bid_method, is_consortium_lead, bid_status, deposit fields, our_price, etc. | status >= 准备投标 |
 | 投标结果 | competitors (含 org_ids/price/score/is_winning), scoring_details, is_won, winning_org_ids (自动推导), winning_price/amount, result_deposit_status, contract fields, etc. | status >= 已投标 |
@@ -106,6 +106,7 @@ Flow endpoints only change the status field — no new records are created:
 - **Multi winning orgs**: `winning_org_ids` (JSON array) is auto-derived from competitors' `is_winning` checkboxes — no manual input needed. `winning_org_id` (single Integer) kept for backward compat.
 - **Bid deposit two-state model**: `DepositStatus` enum (`无`/`未缴纳`/`已缴纳`) for bid info section's `deposit_status` field. `ResultDepositStatus` enum (`未收回`/`已收回`) for result section's `result_deposit_status` field. Submit endpoint sets `result_deposit_status=未收回` only when `deposit_status=已缴纳`. Result section's deposit UI only shows when `deposit_status=已缴纳`. `enrich_project()` computes `deposit_status_display` field: shows 缴纳状态 before 已投标, shows 收回状态 from 已投标 onward.
 - **OrgMap loading**: `loadOrgNames()` uses `page_size=100` (backend max). Previously used 500 which caused 422 error and empty orgMap, breaking all org-dependent features.
+- **入围分项 (shortlisting sub-item)**: `BiddingType.prequalification` bidding type. Links to a parent 入围标 project via `parent_project_id` (self-referential FK). Only shows parent selector when `bidding_type="入围分项"`. Parent selector filters projects by `is_prequalification=true` AND `status=已中标`. Competitors are initially copied from parent (via `POST /api/projects/{id}/sync-competitors`), then maintained independently. "从父项目同步参标单位" button allows manual re-sync. When bidding_type is 入围分项, the "是否入围标" switch is hidden to prevent logic conflicts.
 - **No tests**: The project has no test suite.
 
 ## Design Document
