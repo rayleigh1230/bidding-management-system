@@ -401,26 +401,32 @@ def update_project(
                     raw_comps = []
 
             winning_entries = [c for c in raw_comps if isinstance(c, dict) and c.get("is_winning")]
-            derived_org_ids = []
-            for entry in winning_entries:
-                org_ids = entry.get("org_ids", [])
-                if not org_ids and entry.get("org_id"):
-                    org_ids = [entry["org_id"]]
-                derived_org_ids.extend(org_ids)
 
-            if derived_org_ids:
-                seen = set()
-                unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
-                project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
-                project.winning_org_id = unique_ids[0] if unique_ids else None
-            else:
+            if not winning_entries:
+                # 无中标勾选 → 回退已投标
+                project.status = ProjectStatus.submitted
                 project.winning_org_ids = json.dumps([], ensure_ascii=False)
                 project.winning_org_id = None
-
-            if is_shortlisting:
-                project.status = ProjectStatus.won
             else:
-                if winning_entries:
+                derived_org_ids = []
+                for entry in winning_entries:
+                    org_ids = entry.get("org_ids", [])
+                    if not org_ids and entry.get("org_id"):
+                        org_ids = [entry["org_id"]]
+                    derived_org_ids.extend(org_ids)
+
+                if derived_org_ids:
+                    seen = set()
+                    unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
+                    project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
+                    project.winning_org_id = unique_ids[0] if unique_ids else None
+                else:
+                    project.winning_org_ids = json.dumps([], ensure_ascii=False)
+                    project.winning_org_id = None
+
+                if is_shortlisting:
+                    project.status = ProjectStatus.won
+                else:
                     wp = winning_entries[0].get("price", 0)
                     if wp:
                         if control_type == "金额":
@@ -431,7 +437,7 @@ def update_project(
                             project.winning_amount = _calc_winning_amount(
                                 wp, control_type, project.control_price_upper, project.budget_amount
                             )
-                project.status = ProjectStatus.won
+                    project.status = ProjectStatus.won
         elif not project.is_won:
             # 未中标（is_won=False 且 is_bid_failed=False）
             control_type = _control_type_str(project.control_price_type)
@@ -444,34 +450,41 @@ def update_project(
                     raw_comps = []
 
             winning_entries = [c for c in raw_comps if isinstance(c, dict) and c.get("is_winning")]
-            derived_org_ids = []
-            for entry in winning_entries:
-                org_ids = entry.get("org_ids", [])
-                if not org_ids and entry.get("org_id"):
-                    org_ids = [entry["org_id"]]
-                derived_org_ids.extend(org_ids)
 
-            if derived_org_ids:
-                seen = set()
-                unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
-                project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
-                project.winning_org_id = unique_ids[0] if unique_ids else None
-            else:
+            if not winning_entries:
+                # 没有任何参标单位勾选中标 → 回退到已投标
+                project.status = ProjectStatus.submitted
                 project.winning_org_ids = json.dumps([], ensure_ascii=False)
                 project.winning_org_id = None
+            else:
+                derived_org_ids = []
+                for entry in winning_entries:
+                    org_ids = entry.get("org_ids", [])
+                    if not org_ids and entry.get("org_id"):
+                        org_ids = [entry["org_id"]]
+                    derived_org_ids.extend(org_ids)
 
-            if not is_shortlisting and winning_entries:
-                wp = winning_entries[0].get("price", 0)
-                if wp:
-                    if control_type == "金额":
-                        project.winning_price = None
-                        project.winning_amount = wp
-                    else:
-                        project.winning_price = wp
-                        project.winning_amount = _calc_winning_amount(
-                            wp, control_type, project.control_price_upper, project.budget_amount
-                        )
-            project.status = ProjectStatus.lost
+                if derived_org_ids:
+                    seen = set()
+                    unique_ids = [oid for oid in derived_org_ids if oid not in seen and not seen.add(oid)]
+                    project.winning_org_ids = json.dumps(unique_ids, ensure_ascii=False)
+                    project.winning_org_id = unique_ids[0] if unique_ids else None
+                else:
+                    project.winning_org_ids = json.dumps([], ensure_ascii=False)
+                    project.winning_org_id = None
+
+                if not is_shortlisting and winning_entries:
+                    wp = winning_entries[0].get("price", 0)
+                    if wp:
+                        if control_type == "金额":
+                            project.winning_price = None
+                            project.winning_amount = wp
+                        else:
+                            project.winning_price = wp
+                            project.winning_amount = _calc_winning_amount(
+                                wp, control_type, project.control_price_upper, project.budget_amount
+                            )
+                project.status = ProjectStatus.lost
 
     log_operation(db, current_user.id, "update", "project", project.id, f"更新项目: {project.project_name}")
     db.commit()

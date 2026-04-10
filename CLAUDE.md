@@ -113,6 +113,7 @@ Flow endpoints only change the status field — no new records are created:
 - **Selector preload**: `PlatformSelector` and `OrgSelector`/`ManagerSelector` all use `preloadOptions()` with `loaded` flag on mount + `watch(modelValue)` for lazy load. This ensures el-select always has options for displaying names (not raw IDs) after save/reload.
 - **loadProject watcher guard**: `_updatingFromWinning` flag wraps `resultForm` assignment in `loadProject()` to prevent `is_won` watcher from interfering during data loading. Without this, the watcher could reset competitors' `is_winning` flags before `ensureOurCompanyInCompetitors()` runs.
 - **Column config persistence**: `ProjectList.vue` uses `watch(selectedColumnKeys)` (not `@change`) to save column config to localStorage. Each status tab has its own storage key (`project_list_columns_${status}`).
+- **Bid result auto-trigger rules**: 未中标 cannot be manually selected via radio button (`handleBidResultChange('lost')` is a no-op). It is only auto-triggered when a non-our competitor has `is_winning` checked (via `handleWinningChange`). Conversely, when ALL `is_winning` checkboxes are unchecked, `handleWinningChange` sets `is_won=false`, and on save the backend reverts status to 已投标 regardless of previous state (已中标/未中标/已投标). Frontend `collectSaveData()` always sends `is_won`/`is_bid_failed` when result card is visible — backend handles all derivation logic.
 - **No tests**: The project has no test suite.
 
 ## Design Document

@@ -556,8 +556,8 @@ function handleBidResultChange(val) {
     resultForm.value.is_won = true
     resultForm.value.is_bid_failed = false
   } else if (val === 'lost') {
-    resultForm.value.is_won = false
-    resultForm.value.is_bid_failed = false
+    // 未中标不能手动点选，只能通过勾选其他参标单位中标自动触发
+    return
   } else if (val === 'failed') {
     resultForm.value.is_won = false
     resultForm.value.is_bid_failed = true
@@ -587,6 +587,9 @@ function handleWinningChange(comp) {
   if (winningEntries.some(c => c.org_ids.includes(ourOrgId))) {
     resultForm.value.is_won = true
   } else if (winningEntries.length > 0) {
+    resultForm.value.is_won = false
+  } else {
+    // 所有中标勾选都取消了 → 清除 is_won，回退已投标
     resultForm.value.is_won = false
   }
 }
@@ -923,6 +926,8 @@ function collectSaveData() {
       })),
       scoring_details: resultForm.value.scoring_details,
     })
+    // 始终发送 is_won/is_bid_failed，让后端根据中标勾选情况推导状态
+    // 无中标勾选时后端会自动回退到已投标
   }
   return data
 }
