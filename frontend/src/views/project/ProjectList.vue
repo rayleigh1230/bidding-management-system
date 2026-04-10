@@ -89,6 +89,20 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
+        <!-- 保证金状态 -->
+        <el-table-column v-else-if="col.key === 'deposit_status_display'" label="保证金状态" width="90">
+          <template #default="{ row }">
+            <span v-if="!row.deposit_status_display || row.deposit_status_display === '无'" style="color: #999">无</span>
+            <el-tag v-else-if="row.deposit_status_display === '未缴纳'" size="small" type="info">未缴纳</el-tag>
+            <el-tag v-else-if="row.deposit_status_display === '已缴纳'" size="small" type="success">已缴纳</el-tag>
+            <el-tag v-else-if="row.deposit_status_display === '未收回'" size="small" type="warning">未收回</el-tag>
+            <el-tag v-else-if="row.deposit_status_display === '已收回'" size="small" type="success">已收回</el-tag>
+          </template>
+        </el-table-column>
+        <!-- 保证金金额 -->
+        <el-table-column v-else-if="col.key === 'deposit_amount'" label="保证金" width="100" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.deposit_amount ? row.deposit_amount.toLocaleString() + ' 元' : '-' }}</template>
+        </el-table-column>
         <!-- 合作单位 -->
         <el-table-column v-else-if="col.key === 'partner_names'" label="合作单位" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ (row.partner_names || []).join(', ') || '-' }}</template>
@@ -151,6 +165,8 @@ const allColumns = [
   { key: 'bid_status', label: '投标状态', width: 90, alwaysShow: false, defaultShow: false, prop: 'bid_status' },
   { key: 'our_price_display', label: '我方报价', width: 90, alwaysShow: false, defaultShow: true, prop: 'our_price_display' },
   { key: 'is_won', label: '是否中标', width: 80, alwaysShow: false, defaultShow: false },
+  { key: 'deposit_status_display', label: '保证金状态', width: 90, alwaysShow: false, defaultShow: true },
+  { key: 'deposit_amount', label: '保证金', width: 100, alwaysShow: false, defaultShow: false },
   { key: 'winning_amount_display', label: '中标金额', width: 100, alwaysShow: false, defaultShow: false, prop: 'winning_amount_display' },
   { key: 'created_at', label: '创建时间', width: 150, alwaysShow: false, defaultShow: true },
   { key: 'actions', label: '操作', width: 100, alwaysShow: true, defaultShow: true },

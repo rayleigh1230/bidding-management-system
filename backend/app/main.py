@@ -61,9 +61,18 @@ def on_startup():
             print("Default admin user created: admin / admin123")
 
         # Ensure our company exists in organizations table (ID=1)
-        from .models.organization import Organization
+        from .models.organization import Organization, OrgType
         our_company_name = "浙江意诚检测有限公司"
-        if not db.query(Organization).filter(Organization.name == our_company_name).first():
+        existing = db.query(Organization).filter(
+            (Organization.name == our_company_name) | (Organization.id == 1)
+        ).first()
+        if existing:
+            # Ensure org_type is ours
+            if existing.org_type != OrgType.ours:
+                existing.org_type = OrgType.ours
+                db.commit()
+                print(f"Updated organization org_type: {our_company_name} -> ours")
+        else:
             our_org = Organization(
                 id=1,
                 name=our_company_name,
@@ -76,14 +85,6 @@ def on_startup():
             db.add(our_org)
             db.commit()
             print(f"Default organization created: {our_company_name} (ID=1)")
-        else:
-            # Ensure org_type is ours even if record already exists
-            from .models.organization import OrgType
-            our = db.query(Organization).filter(Organization.name == our_company_name).first()
-            if our and our.org_type != OrgType.ours:
-                our.org_type = OrgType.ours
-                db.commit()
-                print(f"Updated organization org_type: {our_company_name} -> ours")
     finally:
         db.close()
 

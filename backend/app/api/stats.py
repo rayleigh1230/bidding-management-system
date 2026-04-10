@@ -76,7 +76,10 @@ def get_overview(
     # --- deposit_not_returned ---
     deposit_not_returned_list = (
         db.query(ProjectInfo)
-        .filter(ProjectInfo.deposit_status == "未收回")
+        .filter(
+            ProjectInfo.has_deposit == True,  # noqa: E712
+            ProjectInfo.result_deposit_status == "未收回",
+        )
         .all()
     )
     deposit_not_returned = [
@@ -229,11 +232,15 @@ def get_deposits(
     today = date.today()
     response = []
     for p in projects:
-        deposit_status_value = (
-            p.result_deposit_status.value
-            if p.result_deposit_status and hasattr(p.result_deposit_status, "value")
-            else (p.deposit_status.value if p.deposit_status and hasattr(p.deposit_status, "value") else "")
-        )
+        deposit_status_value = ""
+        if p.status in (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost):
+            # 已投标及之后：显示收回状态
+            if p.result_deposit_status and hasattr(p.result_deposit_status, "value"):
+                deposit_status_value = p.result_deposit_status.value
+        else:
+            # 已投标前：显示缴纳状态
+            if p.deposit_status and hasattr(p.deposit_status, "value"):
+                deposit_status_value = p.deposit_status.value
 
         days_overdue = 0
         if deposit_status_value == "未收回" and p.deposit_date:

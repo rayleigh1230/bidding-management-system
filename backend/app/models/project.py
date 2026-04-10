@@ -48,8 +48,6 @@ class DepositStatus(str, enum.Enum):
     none = "无"
     unpaid = "未缴纳"
     paid = "已缴纳"
-    not_returned = "未收回"
-    returned = "已收回"
 
 
 class ContractStatus(str, enum.Enum):

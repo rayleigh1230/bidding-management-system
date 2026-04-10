@@ -132,4 +132,5 @@ class ProjectResponse(BaseModel):
     our_price_display: Optional[str] = None
     winning_price_display: Optional[str] = None
     winning_amount_display: Optional[str] = None
+    deposit_status_display: Optional[str] = None
     model_config = {"from_attributes": True}

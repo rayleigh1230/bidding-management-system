@@ -75,7 +75,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 Flow endpoints only change the status field — no new records are created:
 - `POST /api/projects/{id}/publish` — 跟进中 → 已发公告
 - `POST /api/projects/{id}/prepare` — 已发公告 → 准备投标
-- `POST /api/projects/{id}/submit` — 准备投标 → 已投标 (+ deposit status transition)
+- `POST /api/projects/{id}/submit` — 准备投标 → 已投标 (+ sets `result_deposit_status=未收回` when `has_deposit=true` and `deposit_status=已缴纳`)
 - `POST /api/projects/{id}/abandon` — any → 已放弃 (with reason)
 - `PUT /api/projects/{id}` with `is_won` field — 已投标 → 已中标/未中标 (auto-calculates winning_price/winning_amount, except for 入围标 which uses manual input)
 
@@ -100,7 +100,7 @@ Flow endpoints only change the status field — no new records are created:
 - **入围标 (shortlisting)**: When `is_prequalification=true`, competitors have an "入围" checkbox. Checking it auto-adds the org to `winning_org_ids`. In won state, winning_price/winning_amount use manual input (not auto-calculated). Our company is auto-added to competitors when status >= 已投标 (via `ensureOurCompanyInCompetitors()` at end of `loadProject()`). Watch on `is_won` auto-toggles our company's `is_shortlisted` and `winning_org_ids` for 入围标.
 - **OrgType filter**: Organizations have `org_type` field (ours/external). `OrgSelector` has `excludeOurs` prop to filter out our company from bidding_unit, agency, and partner selections, while keeping it available for competitors and winning org.
 - **Multi winning orgs**: `winning_org_ids` (JSON array) supports multiple winning orgs (入围标 multiple shortlisted, 联合体 consortium). `winning_org_id` (single Integer) kept for backward compat. Frontend uses el-tag display with inline el-select search for adding orgs.
-- **Bid deposit**: Bid info section has `has_deposit` switch + amount/date/paid checkbox in one row. Result section has `result_deposit_status` (未收回/已收回) conditional on `has_deposit`, with return date shown on same row when "已收回".
+- **Bid deposit two-state model**: `DepositStatus` enum (`无`/`未缴纳`/`已缴纳`) for bid info section's `deposit_status` field. `ResultDepositStatus` enum (`未收回`/`已收回`) for result section's `result_deposit_status` field. Submit endpoint sets `result_deposit_status=未收回` only when `deposit_status=已缴纳`. Result section's deposit UI only shows when `deposit_status=已缴纳`. `enrich_project()` computes `deposit_status_display` field: shows 缴纳状态 before 已投标, shows 收回状态 from 已投标 onward.
 - **OrgMap loading**: `loadOrgNames()` uses `page_size=100` (backend max). Previously used 500 which caused 422 error and empty orgMap, breaking all org-dependent features.
 - **No tests**: The project has no test suite.
 

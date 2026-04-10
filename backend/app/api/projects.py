@@ -199,6 +199,19 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     data["winning_price_display"] = display["winning_price_display"]
     data["winning_amount_display"] = display["winning_amount_display"]
 
+    # deposit_status_display: 根据状态显示不同阶段的保证金状态
+    if not project.has_deposit:
+        data["deposit_status_display"] = "无"
+    elif project.status in (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost):
+        # 已投标及之后：显示收回状态
+        if project.result_deposit_status:
+            data["deposit_status_display"] = project.result_deposit_status.value
+        else:
+            data["deposit_status_display"] = "无"
+    else:
+        # 准备投标及之前：显示缴纳状态
+        data["deposit_status_display"] = project.deposit_status.value if project.deposit_status else "无"
+
     return data
 
 
@@ -419,9 +432,9 @@ def submit_project(
 
     project.status = ProjectStatus.submitted
 
-    # Deposit status transition: 已缴纳 → 未收回
+    # Deposit status transition: set result_deposit_status to 未收回
     if project.has_deposit and project.deposit_status == DepositStatus.paid:
-        project.deposit_status = DepositStatus.not_returned
+        project.result_deposit_status = ResultDepositStatus.not_returned
 
     log_operation(db, current_user.id, "advance", "project", project.id, f"提交投标: {project.project_name}")
     db.commit()

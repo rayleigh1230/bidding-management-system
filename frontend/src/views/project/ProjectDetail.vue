@@ -225,8 +225,8 @@
             <el-button type="primary" link @click="resultForm.competitors.push({ org_id: null, price: 0, score: 0, is_shortlisted: false })">+ 添加参标单位</el-button>
           </el-form-item>
 
-          <!-- 保证金状态（跟随投标信息的有保证金开关） -->
-          <el-row v-if="bidForm.has_deposit" :gutter="16">
+          <!-- 保证金状态（仅已缴纳时显示收回流程） -->
+          <el-row v-if="bidForm.has_deposit && depositPaid" :gutter="16">
             <el-col :span="12">
               <el-form-item label="保证金状态">
                 <el-select v-model="resultForm.result_deposit_status" style="width: 100%">
@@ -570,7 +570,7 @@ watch(() => bidForm.value.our_price, (newPrice) => {
 })
 
 watch(() => bidForm.value.has_deposit, (newVal) => {
-  if (newVal && !resultForm.value.result_deposit_status) {
+  if (newVal && bidForm.value.deposit_status === '已缴纳' && !resultForm.value.result_deposit_status) {
     resultForm.value.result_deposit_status = '未收回'
   }
 })
@@ -630,7 +630,7 @@ async function loadProject() {
         is_shortlisted: c.is_shortlisted || false,
       })),
       scoring_details: parseJson(data.scoring_details, []),
-      result_deposit_status: data.result_deposit_status || (data.has_deposit ? '未收回' : null),
+      result_deposit_status: data.result_deposit_status || (data.has_deposit && data.deposit_status === '已缴纳' && statusGte(data.status, '已投标') ? '未收回' : null),
       is_won: data.is_won || false,
       winning_org_id: data.winning_org_id,
       winning_org_ids: parseJson(data.winning_org_ids, []),
