@@ -44,7 +44,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 ### Frontend Structure (`frontend/src/`)
 - **`api/project.js`** — Single Axios-based API module for all project operations (CRUD + flow).
 - **`components/`** — Shared components: `Layout.vue` (sidebar + header shell), `OrgSelector` (remote search + inline create, `excludeOurs` prop filters out our company), `PlatformSelector`/`ManagerSelector` (remote search + inline create), `RegionCascader` (省市区 picker).
-- **`views/project/`** — Two pages: `ProjectList.vue` (list with custom column selector per-status config and quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections in 2x2 grid layout).
+- **`views/project/`** — Two pages: `ProjectList.vue` (list with collapsible advanced search panel, custom column selector per-status config, and quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections in 2x2 grid layout).
 - **`stores/user.js`** — Pinia store for auth state (token + user in localStorage).
 - **`router/index.js`** — Vue Router with auth guard, lazy-loaded routes.
 
@@ -85,6 +85,16 @@ Flow endpoints only change the status field — no new records are created:
 - Flow endpoints return `{"message": "..."}`
 - All endpoints use `model_dump(exclude_unset=True)` for partial updates
 - `enrich_project()` populates all related names and computed display fields
+
+### Advanced Search (`GET /api/projects`)
+`list_projects` endpoint supports 23 query parameters for filtering:
+- **Basic**: `keyword` (project name, with `keyword_match`="fuzzy"/"exact"), `status`, `bidding_type`
+- **Organization**: `bidding_unit_id`, `agency_id`, `publish_platform_id`, `manager_id` (JSON array via `json_each`), `partner_id` (JSON array via `json_each`)
+- **Enum/Bool**: `bid_method`, `is_prequalification`, `is_won`
+- **Date range**: `created_after`/`created_before`, `bid_deadline_after`/`bid_deadline_before`
+- **Amount range**: `budget_min`/`budget_max`, `winning_amount_min`/`winning_amount_max`
+- **Pagination**: `page`, `page_size`
+- Frontend `ProjectList.vue` uses a `watch` on advanced filter values (not `@change` events) to auto-trigger `loadData()`. `_initialized` flag prevents double-load during state restoration. Filter state persisted in localStorage.
 
 ### Frontend-Backend Data Mapping
 - Frontend sends region as `JSON.stringify(["浙江省","杭州市","西湖区"])`, stored in `String(100)` column

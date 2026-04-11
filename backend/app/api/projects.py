@@ -1,6 +1,8 @@
 import json
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -102,120 +104,70 @@ def _enrich_winning_display(is_won, control_type, our_price, winning_price, winn
 
 # ---- Enrich function ----
 
-def enrich_project(project: ProjectInfo, db: Session) -> dict:
-    """填充所有 enrich 字段：关联名称 + 价格计算显示"""
+def _parse_json_list(raw):
+    """将 JSON 字段统一解析为 list"""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
+
+def _enrich_project_with_maps(project: ProjectInfo, org_map: dict, manager_map: dict, platform_map: dict, user_map: dict, parent_map: dict) -> dict:
+    """使用预加载的映射表填充 enrich 字段（无数据库查询）"""
     data = ProjectResponse.model_validate(project).model_dump()
 
     # bidding_unit_name
-    if project.bidding_unit_id:
-        org = db.query(Organization).filter(Organization.id == project.bidding_unit_id).first()
-        data["bidding_unit_name"] = org.name if org else None
-    else:
-        data["bidding_unit_name"] = None
+    data["bidding_unit_name"] = org_map.get(project.bidding_unit_id, {}).get("name") if project.bidding_unit_id else None
 
     # manager_names
-    manager_ids = project.manager_ids if project.manager_ids else []
-    if isinstance(manager_ids, str):
-        try:
-            manager_ids = json.loads(manager_ids)
-        except (json.JSONDecodeError, TypeError):
-            manager_ids = []
-    if manager_ids:
-        managers = db.query(Manager).filter(Manager.id.in_(manager_ids)).all()
-        manager_map = {m.id: m.name for m in managers}
-        data["manager_names"] = [manager_map.get(mid) for mid in manager_ids if mid in manager_map]
-    else:
-        data["manager_names"] = []
+    mids = _parse_json_list(project.manager_ids)
+    data["manager_names"] = [manager_map.get(mid) for mid in mids if mid in manager_map]
 
     # agency_name
-    if project.agency_id:
-        org = db.query(Organization).filter(Organization.id == project.agency_id).first()
-        data["agency_name"] = org.name if org else None
-    else:
-        data["agency_name"] = None
+    data["agency_name"] = org_map.get(project.agency_id, {}).get("name") if project.agency_id else None
 
     # platform_name
-    if project.publish_platform_id:
-        platform = db.query(Platform).filter(Platform.id == project.publish_platform_id).first()
-        data["platform_name"] = platform.name if platform else None
-    else:
-        data["platform_name"] = None
+    data["platform_name"] = platform_map.get(project.publish_platform_id) if project.publish_platform_id else None
 
     # specialist_name
-    if project.bid_specialist_id:
-        specialist = db.query(User).filter(User.id == project.bid_specialist_id).first()
-        data["specialist_name"] = specialist.display_name if specialist else None
-    else:
-        data["specialist_name"] = None
+    data["specialist_name"] = user_map.get(project.bid_specialist_id) if project.bid_specialist_id else None
 
     # partner_names
-    partner_ids = project.partner_ids if project.partner_ids else []
-    if isinstance(partner_ids, str):
-        try:
-            partner_ids = json.loads(partner_ids)
-        except (json.JSONDecodeError, TypeError):
-            partner_ids = []
-    if partner_ids:
-        partners = db.query(Organization).filter(Organization.id.in_(partner_ids)).all()
-        partner_map = {p.id: p.name for p in partners}
-        data["partner_names"] = [partner_map.get(pid) for pid in partner_ids if pid in partner_map]
-    else:
-        data["partner_names"] = []
+    pids = _parse_json_list(project.partner_ids)
+    data["partner_names"] = [org_map.get(pid, {}).get("name") for pid in pids if pid in org_map]
 
     # winning_org_name (backward compat)
-    if project.winning_org_id:
-        winning_org = db.query(Organization).filter(Organization.id == project.winning_org_id).first()
-        data["winning_org_name"] = winning_org.name if winning_org else None
-    else:
-        data["winning_org_name"] = None
+    data["winning_org_name"] = org_map.get(project.winning_org_id, {}).get("name") if project.winning_org_id else None
 
     # winning_org_names (multi)
-    winning_ids = project.winning_org_ids or []
-    if isinstance(winning_ids, str):
-        try:
-            winning_ids = json.loads(winning_ids)
-        except (json.JSONDecodeError, TypeError):
-            winning_ids = []
+    winning_ids = _parse_json_list(project.winning_org_ids)
     if winning_ids:
-        win_orgs = db.query(Organization).filter(Organization.id.in_(winning_ids)).all()
-        win_map = {o.id: o.name for o in win_orgs}
-        data["winning_org_names"] = [win_map.get(oid) for oid in winning_ids if oid in win_map]
-        # backward compat: set winning_org_name from first entry
+        data["winning_org_names"] = [org_map.get(oid, {}).get("name") for oid in winning_ids if oid in org_map]
         if not data["winning_org_name"] and winning_ids:
-            first = db.query(Organization).filter(Organization.id == winning_ids[0]).first()
-            data["winning_org_name"] = first.name if first else None
+            data["winning_org_name"] = org_map.get(winning_ids[0], {}).get("name")
     else:
         data["winning_org_names"] = []
 
     # competitors: backward compat + enrich org_names
-    raw_competitors = data.get("competitors", [])
-    if isinstance(raw_competitors, str):
-        try:
-            raw_competitors = json.loads(raw_competitors)
-        except (json.JSONDecodeError, TypeError):
-            raw_competitors = []
-    all_org_ids = set()
+    raw_competitors = _parse_json_list(data.get("competitors", []))
     converted = []
     for c in raw_competitors:
         if not isinstance(c, dict):
             continue
-        # Backward compat: org_id -> org_ids
         if "org_ids" not in c and "org_id" in c:
             c["org_ids"] = [c["org_id"]] if c["org_id"] else []
         if "org_ids" not in c:
             c["org_ids"] = []
         if "is_winning" not in c:
             c["is_winning"] = False
-        all_org_ids.update(c["org_ids"])
+        c["org_names"] = [org_map.get(oid, {}).get("name", "未知单位") for oid in c["org_ids"]]
         converted.append(c)
-    # Batch query org names
-    if all_org_ids:
-        orgs = db.query(Organization).filter(Organization.id.in_(all_org_ids)).all()
-        org_name_map = {o.id: o.name for o in orgs}
-    else:
-        org_name_map = {}
-    for c in converted:
-        c["org_names"] = [org_name_map.get(oid, "未知单位") for oid in c["org_ids"]]
     data["competitors"] = converted
 
     # Price displays
@@ -232,29 +184,153 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
     data["winning_amount_display"] = display["winning_amount_display"]
 
     # parent_project_name
-    if project.parent_project_id:
-        parent = db.query(ProjectInfo).filter(ProjectInfo.id == project.parent_project_id).first()
-        data["parent_project_name"] = parent.project_name if parent else None
-    else:
-        data["parent_project_name"] = None
+    data["parent_project_name"] = parent_map.get(project.parent_project_id) if project.parent_project_id else None
 
-    # deposit_status_display: 根据状态显示不同阶段的保证金状态
+    # deposit_status_display
     if not project.has_deposit:
         data["deposit_status_display"] = "无"
     elif project.status in (ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost, ProjectStatus.failed_bid):
-        # 已投标及之后：显示收回状态
         if project.result_deposit_status:
             data["deposit_status_display"] = project.result_deposit_status.value
         else:
             data["deposit_status_display"] = "无"
     else:
-        # 准备投标及之前：显示缴纳状态
         data["deposit_status_display"] = project.deposit_status.value if project.deposit_status else "无"
 
     # is_registered: 虚拟字段，从 status 推导
     data["is_registered"] = (project.status == ProjectStatus.registered)
 
     return data
+
+
+def enrich_project(project: ProjectInfo, db: Session) -> dict:
+    """单项目富化（用于详情页等单条查询场景）"""
+    data = ProjectResponse.model_validate(project).model_dump()
+
+    # 收集此项目需要的所有 ID
+    org_ids = set()
+    manager_ids = set()
+    platform_ids = set()
+    user_ids = set()
+    parent_ids = set()
+
+    if project.bidding_unit_id:
+        org_ids.add(project.bidding_unit_id)
+    if project.agency_id:
+        org_ids.add(project.agency_id)
+    if project.publish_platform_id:
+        platform_ids.add(project.publish_platform_id)
+    if project.bid_specialist_id:
+        user_ids.add(project.bid_specialist_id)
+    if project.winning_org_id:
+        org_ids.add(project.winning_org_id)
+    if project.parent_project_id:
+        parent_ids.add(project.parent_project_id)
+    for mid in _parse_json_list(project.manager_ids):
+        manager_ids.add(mid)
+    for pid in _parse_json_list(project.partner_ids):
+        org_ids.add(pid)
+    for wid in _parse_json_list(project.winning_org_ids):
+        org_ids.add(wid)
+    for c in _parse_json_list(data.get("competitors", [])):
+        if isinstance(c, dict):
+            for oid in c.get("org_ids", []):
+                org_ids.add(oid)
+            if "org_id" in c and c["org_id"]:
+                org_ids.add(c["org_id"])
+
+    # 批量查询（最多 5 次查询）
+    org_map = {}
+    if org_ids:
+        for o in db.query(Organization).filter(Organization.id.in_(org_ids)).all():
+            org_map[o.id] = {"name": o.name}
+
+    manager_map = {}
+    if manager_ids:
+        for m in db.query(Manager).filter(Manager.id.in_(manager_ids)).all():
+            manager_map[m.id] = m.name
+
+    platform_map = {}
+    if platform_ids:
+        for p in db.query(Platform).filter(Platform.id.in_(platform_ids)).all():
+            platform_map[p.id] = p.name
+
+    user_map = {}
+    if user_ids:
+        for u in db.query(User).filter(User.id.in_(user_ids)).all():
+            user_map[u.id] = u.display_name
+
+    parent_map = {}
+    if parent_ids:
+        for pp in db.query(ProjectInfo).filter(ProjectInfo.id.in_(parent_ids)).all():
+            parent_map[pp.id] = pp.project_name
+
+    return _enrich_project_with_maps(project, org_map, manager_map, platform_map, user_map, parent_map)
+
+
+def enrich_project_list(projects: list, db: Session) -> list:
+    """批量富化项目列表（用于列表页，5 次查询替代 N×9 次）"""
+    # 第一轮：收集所有需要的 ID
+    org_ids = set()
+    manager_ids = set()
+    platform_ids = set()
+    user_ids = set()
+    parent_ids = set()
+
+    for p in projects:
+        if p.bidding_unit_id:
+            org_ids.add(p.bidding_unit_id)
+        if p.agency_id:
+            org_ids.add(p.agency_id)
+        if p.publish_platform_id:
+            platform_ids.add(p.publish_platform_id)
+        if p.bid_specialist_id:
+            user_ids.add(p.bid_specialist_id)
+        if p.winning_org_id:
+            org_ids.add(p.winning_org_id)
+        if p.parent_project_id:
+            parent_ids.add(p.parent_project_id)
+        for mid in _parse_json_list(p.manager_ids):
+            manager_ids.add(mid)
+        for pid in _parse_json_list(p.partner_ids):
+            org_ids.add(pid)
+        for wid in _parse_json_list(p.winning_org_ids):
+            org_ids.add(wid)
+        for c in _parse_json_list(p.competitors):
+            if isinstance(c, dict):
+                for oid in c.get("org_ids", []):
+                    org_ids.add(oid)
+                if "org_id" in c and c["org_id"]:
+                    org_ids.add(c["org_id"])
+
+    # 第二轮：5 次批量查询
+    org_map = {}
+    if org_ids:
+        for o in db.query(Organization).filter(Organization.id.in_(org_ids)).all():
+            org_map[o.id] = {"name": o.name}
+
+    manager_map = {}
+    if manager_ids:
+        for m in db.query(Manager).filter(Manager.id.in_(manager_ids)).all():
+            manager_map[m.id] = m.name
+
+    platform_map = {}
+    if platform_ids:
+        for p in db.query(Platform).filter(Platform.id.in_(platform_ids)).all():
+            platform_map[p.id] = p.name
+
+    user_map = {}
+    if user_ids:
+        for u in db.query(User).filter(User.id.in_(user_ids)).all():
+            user_map[u.id] = u.display_name
+
+    parent_map = {}
+    if parent_ids:
+        for pp in db.query(ProjectInfo).filter(ProjectInfo.id.in_(parent_ids)).all():
+            parent_map[pp.id] = pp.project_name
+
+    # 第三轮：组装结果
+    return [_enrich_project_with_maps(p, org_map, manager_map, platform_map, user_map, parent_map) for p in projects]
 
 
 # ---- JSON list fields that need serialization ----
@@ -267,10 +343,26 @@ _JSON_LIST_FIELDS = {"manager_ids", "tags", "bid_documents", "partner_ids", "bid
 @router.get("", response_model=dict)
 def list_projects(
     keyword: str = Query("", description="搜索关键词"),
+    keyword_match: str = Query("fuzzy", description="关键词匹配方式: fuzzy/exact"),
     status: str = Query("", description="项目状态"),
     bidding_type: str = Query("", description="招标类型"),
     region: str = Query("", description="地区"),
     is_prequalification: Optional[bool] = Query(None, description="是否入围标"),
+    manager_id: Optional[int] = Query(None, description="负责人ID"),
+    bidding_unit_id: Optional[int] = Query(None, description="招标单位ID"),
+    agency_id: Optional[int] = Query(None, description="代理单位ID"),
+    publish_platform_id: Optional[int] = Query(None, description="发布平台ID"),
+    partner_id: Optional[int] = Query(None, description="合作单位ID"),
+    bid_method: str = Query("", description="投标方式"),
+    is_won: Optional[bool] = Query(None, description="是否中标"),
+    created_after: str = Query("", description="创建时间起始"),
+    created_before: str = Query("", description="创建时间结束"),
+    bid_deadline_after: str = Query("", description="开标时间起始"),
+    bid_deadline_before: str = Query("", description="开标时间结束"),
+    budget_min: Optional[float] = Query(None, description="预算金额最小值"),
+    budget_max: Optional[float] = Query(None, description="预算金额最大值"),
+    winning_amount_min: Optional[float] = Query(None, description="中标金额最小值"),
+    winning_amount_max: Optional[float] = Query(None, description="中标金额最大值"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     db: Session = Depends(get_db),
@@ -278,8 +370,13 @@ def list_projects(
 ):
     query = db.query(ProjectInfo)
 
+    # 关键词匹配
     if keyword:
-        query = query.filter(ProjectInfo.project_name.contains(keyword))
+        if keyword_match == "exact":
+            query = query.filter(ProjectInfo.project_name == keyword)
+        else:
+            query = query.filter(ProjectInfo.project_name.contains(keyword))
+    # 状态
     if status:
         try:
             status_enum = ProjectStatus(status)
@@ -287,12 +384,61 @@ def list_projects(
             status_enum = None
         if status_enum:
             query = query.filter(ProjectInfo.status == status_enum)
+    # 招标类型
     if bidding_type:
         query = query.filter(ProjectInfo.bidding_type == bidding_type)
+    # 地区
     if region:
         query = query.filter(ProjectInfo.region.contains(region))
+    # 是否入围标
     if is_prequalification is not None:
         query = query.filter(ProjectInfo.is_prequalification == is_prequalification)
+    # 负责人（JSON 数组包含）
+    if manager_id:
+        query = query.filter(text(
+            "EXISTS (SELECT 1 FROM json_each(project_infos.manager_ids) WHERE json_each.value = :mid)"
+        )).params(mid=manager_id)
+    # 招标单位
+    if bidding_unit_id:
+        query = query.filter(ProjectInfo.bidding_unit_id == bidding_unit_id)
+    # 代理单位
+    if agency_id:
+        query = query.filter(ProjectInfo.agency_id == agency_id)
+    # 发布平台
+    if publish_platform_id:
+        query = query.filter(ProjectInfo.publish_platform_id == publish_platform_id)
+    # 合作单位（JSON 数组包含）
+    if partner_id:
+        query = query.filter(text(
+            "EXISTS (SELECT 1 FROM json_each(project_infos.partner_ids) WHERE json_each.value = :pid)"
+        )).params(pid=partner_id)
+    # 投标方式
+    if bid_method:
+        query = query.filter(ProjectInfo.bid_method == bid_method)
+    # 中标结果
+    if is_won is not None:
+        query = query.filter(ProjectInfo.is_won == is_won)
+    # 创建时间范围
+    if created_after:
+        query = query.filter(ProjectInfo.created_at >= created_after)
+    if created_before:
+        end = datetime.strptime(created_before, "%Y-%m-%d") + timedelta(days=1)
+        query = query.filter(ProjectInfo.created_at < end)
+    # 开标时间范围
+    if bid_deadline_after:
+        query = query.filter(ProjectInfo.bid_deadline >= bid_deadline_after)
+    if bid_deadline_before:
+        query = query.filter(ProjectInfo.bid_deadline <= bid_deadline_before)
+    # 预算金额范围
+    if budget_min is not None:
+        query = query.filter(ProjectInfo.budget_amount >= budget_min)
+    if budget_max is not None:
+        query = query.filter(ProjectInfo.budget_amount <= budget_max)
+    # 中标金额范围
+    if winning_amount_min is not None:
+        query = query.filter(ProjectInfo.winning_amount >= winning_amount_min)
+    if winning_amount_max is not None:
+        query = query.filter(ProjectInfo.winning_amount <= winning_amount_max)
 
     total = query.count()
     items = (
@@ -302,7 +448,7 @@ def list_projects(
         .all()
     )
 
-    enriched = [enrich_project(item, db) for item in items]
+    enriched = enrich_project_list(items, db)
     return {
         "items": enriched,
         "total": total,

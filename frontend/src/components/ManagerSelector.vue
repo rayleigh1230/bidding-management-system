@@ -66,7 +66,7 @@ async function preloadOptions() {
   if (loaded) return
   loaded = true
   try {
-    const res = await getManagers({ page_size: 100 })
+    const res = await getManagers({ page_size: 500 })
     options.value = res.items
   } catch { /* ignore */ }
 }
@@ -77,7 +77,7 @@ async function handleSearch(query) {
   searchTimer = setTimeout(async () => {
     loading.value = true
     try {
-      const res = await getManagers({ keyword: query, page_size: 50 })
+      const res = await getManagers({ keyword: query, page_size: 200 })
       options.value = res.items
     } finally {
       loading.value = false

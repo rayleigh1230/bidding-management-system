@@ -15,7 +15,16 @@
     </div>
 
     <div style="display: flex; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px">
-      <div style="display: flex; gap: 8px; flex-wrap: wrap">
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+        <el-dropdown trigger="click" @command="v => { keywordMatch = v; loadData() }">
+          <el-button size="default" style="padding: 8px 10px">{{ keywordMatch === 'fuzzy' ? '模糊' : '精确' }}</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="fuzzy">模糊匹配</el-dropdown-item>
+              <el-dropdown-item command="exact">精确匹配</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-input v-model="filters.keyword" placeholder="搜索项目名称" clearable style="width: 200px" @clear="loadData" @keyup.enter="loadData" />
         <el-select v-model="filters.bidding_type" placeholder="招标类型" clearable style="width: 140px" @change="loadData">
           <el-option label="公开招标" value="公开招标" />
@@ -24,6 +33,9 @@
           <el-option label="入围分项" value="入围分项" />
         </el-select>
         <el-button @click="loadData"><el-icon><Search /></el-icon> 搜索</el-button>
+        <el-link type="primary" :underline="false" @click="showAdvanced = !showAdvanced" style="font-size: 13px">
+          高级搜索 <el-icon style="margin-left: 2px"><ArrowDown v-if="!showAdvanced" /><ArrowUp v-else /></el-icon>
+        </el-link>
       </div>
       <div style="display: flex; gap: 8px; align-items: center">
         <el-popover placement="bottom-end" :width="280" trigger="click">
@@ -44,6 +56,77 @@
         <el-button type="primary" @click="$router.push('/projects/new')"><el-icon><Plus /></el-icon> 新增项目</el-button>
       </div>
     </div>
+
+    <!-- 高级搜索面板 -->
+    <transition name="el-zoom-in-top">
+      <div v-if="showAdvanced" style="margin-bottom: 12px; padding: 16px; background: var(--el-fill-color-lighter); border-radius: 6px;">
+        <el-row :gutter="16">
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">地区</div>
+            <RegionCascader v-model="filters.region" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">招标单位</div>
+            <OrgSelector v-model="filters.bidding_unit_id" :excludeOurs="false" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">代理单位</div>
+            <OrgSelector v-model="filters.agency_id" :excludeOurs="false" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">负责人</div>
+            <ManagerSelector v-model="filters.manager_id" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">发布平台</div>
+            <PlatformSelector v-model="filters.publish_platform_id" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">合作单位</div>
+            <OrgSelector v-model="filters.partner_id" :excludeOurs="false" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">投标方式</div>
+            <el-select v-model="filters.bid_method" placeholder="全部" clearable style="width: 100%">
+              <el-option label="独立" value="独立" />
+              <el-option label="联合体" value="联合体" />
+              <el-option label="配合" value="配合" />
+              <el-option label="陪标" value="陪标" />
+            </el-select>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">是否入围标</div>
+            <el-select v-model="filters.is_prequalification" placeholder="全部" clearable style="width: 100%">
+              <el-option label="是" :value="true" />
+              <el-option label="否" :value="false" />
+            </el-select>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">开标时间</div>
+            <el-date-picker v-model="bidDeadlineDateRange" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 100%" />
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">预算金额（万元）</div>
+            <div style="display: flex; align-items: center; gap: 4px">
+              <el-input-number v-model="filters.budget_min" :controls="false" placeholder="最低" style="width: 50%" />
+              <span style="color: #c0c4cc">~</span>
+              <el-input-number v-model="filters.budget_max" :controls="false" placeholder="最高" style="width: 50%" />
+            </div>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">中标金额（万元）</div>
+            <div style="display: flex; align-items: center; gap: 4px">
+              <el-input-number v-model="filters.winning_amount_min" :controls="false" placeholder="最低" style="width: 50%" />
+              <span style="color: #c0c4cc">~</span>
+              <el-input-number v-model="filters.winning_amount_max" :controls="false" placeholder="最高" style="width: 50%" />
+            </div>
+          </el-col>
+        </el-row>
+        <div style="text-align: right; margin-top: 4px">
+          <el-button @click="resetAdvancedFilters">重置</el-button>
+        </div>
+      </div>
+    </transition>
 
     <el-table :data="tableData" v-loading="loading" border stripe :header-cell-style="{ whiteSpace: 'nowrap' }">
       <template v-for="col in visibleColumns" :key="col.key">
@@ -139,8 +222,12 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Plus, Setting } from '@element-plus/icons-vue'
+import { Search, Plus, Setting, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { getProjects, deleteProject } from '../../api/project'
+import RegionCascader from '../../components/RegionCascader.vue'
+import ManagerSelector from '../../components/ManagerSelector.vue'
+import PlatformSelector from '../../components/PlatformSelector.vue'
+import OrgSelector from '../../components/OrgSelector.vue'
 
 const STORAGE_PREFIX = 'project_list_columns'
 
@@ -218,7 +305,97 @@ const pageSize = ref(20)
 const total = ref(0)
 const activeStatus = ref('')
 
-const filters = reactive({ keyword: '', status: '', bidding_type: '' })
+const filters = reactive({
+  keyword: '', status: '', bidding_type: '',
+  region: [], manager_id: null, bidding_unit_id: null, agency_id: null,
+  publish_platform_id: null, partner_id: null, bid_method: '',
+  is_prequalification: null,
+  bid_deadline_after: '', bid_deadline_before: '',
+  budget_min: null, budget_max: null,
+  winning_amount_min: null, winning_amount_max: null,
+})
+const keywordMatch = ref('fuzzy')
+const showAdvanced = ref(false)
+const bidDeadlineDateRange = ref(null)
+let _initialized = false
+
+const ADVANCED_STORAGE_KEY = 'project_list_advanced_filters'
+const ADVANCED_OPEN_KEY = 'project_list_advanced_open'
+
+function saveAdvancedState() {
+  const state = {
+    region: filters.region,
+    manager_id: filters.manager_id,
+    bidding_unit_id: filters.bidding_unit_id,
+    agency_id: filters.agency_id,
+    publish_platform_id: filters.publish_platform_id,
+    partner_id: filters.partner_id,
+    bid_method: filters.bid_method,
+    is_prequalification: filters.is_prequalification,
+    bid_deadline_after: filters.bid_deadline_after,
+    bid_deadline_before: filters.bid_deadline_before,
+    budget_min: filters.budget_min,
+    budget_max: filters.budget_max,
+    winning_amount_min: filters.winning_amount_min,
+    winning_amount_max: filters.winning_amount_max,
+    keywordMatch: keywordMatch.value,
+  }
+  localStorage.setItem(ADVANCED_STORAGE_KEY, JSON.stringify(state))
+}
+
+function loadAdvancedState() {
+  try {
+    const saved = localStorage.getItem(ADVANCED_STORAGE_KEY)
+    if (saved) return JSON.parse(saved)
+  } catch { /* ignore */ }
+  return null
+}
+
+function resetAdvancedFilters() {
+  filters.region = []
+  filters.manager_id = null
+  filters.bidding_unit_id = null
+  filters.agency_id = null
+  filters.publish_platform_id = null
+  filters.partner_id = null
+  filters.bid_method = ''
+  filters.is_prequalification = null
+  filters.bid_deadline_after = ''
+  filters.bid_deadline_before = ''
+  filters.budget_min = null
+  filters.budget_max = null
+  filters.winning_amount_min = null
+  filters.winning_amount_max = null
+  bidDeadlineDateRange.value = null
+  page.value = 1
+  loadData()
+}
+
+// 监听高级筛选值变化 → 自动触发搜索
+watch(
+  () => [
+    filters.region, filters.manager_id, filters.bidding_unit_id,
+    filters.agency_id, filters.publish_platform_id, filters.partner_id,
+    filters.bid_method, filters.is_prequalification,
+    bidDeadlineDateRange.value,
+    filters.budget_min, filters.budget_max,
+    filters.winning_amount_min, filters.winning_amount_max,
+  ],
+  () => {
+    if (!_initialized) return
+    // 同步日期范围到 filters
+    if (bidDeadlineDateRange.value) {
+      filters.bid_deadline_after = bidDeadlineDateRange.value[0]
+      filters.bid_deadline_before = bidDeadlineDateRange.value[1]
+    } else {
+      filters.bid_deadline_after = ''
+      filters.bid_deadline_before = ''
+    }
+    page.value = 1
+    loadData()
+  },
+  { deep: true }
+)
 
 const statusMap = {
   '跟进中': { label: '跟进中', type: 'info' },
@@ -256,7 +433,31 @@ function setStatus(status) {
 async function loadData() {
   loading.value = true
   try {
-    const res = await getProjects({ ...filters, page: page.value, page_size: pageSize.value })
+    const params = { page: page.value, page_size: pageSize.value }
+    // 基本筛选
+    if (filters.keyword) { params.keyword = filters.keyword; params.keyword_match = keywordMatch.value }
+    if (filters.status) params.status = filters.status
+    if (filters.bidding_type) params.bidding_type = filters.bidding_type
+    // 高级筛选
+    if (filters.region && filters.region.length > 0) {
+      params.region = filters.region[filters.region.length - 1]
+    }
+    if (filters.manager_id) params.manager_id = filters.manager_id
+    if (filters.bidding_unit_id) params.bidding_unit_id = filters.bidding_unit_id
+    if (filters.agency_id) params.agency_id = filters.agency_id
+    if (filters.publish_platform_id) params.publish_platform_id = filters.publish_platform_id
+    if (filters.partner_id) params.partner_id = filters.partner_id
+    if (filters.bid_method) params.bid_method = filters.bid_method
+    if (filters.is_prequalification !== null && filters.is_prequalification !== '') params.is_prequalification = filters.is_prequalification
+    if (filters.bid_deadline_after) params.bid_deadline_after = filters.bid_deadline_after
+    if (filters.bid_deadline_before) params.bid_deadline_before = filters.bid_deadline_before
+    if (filters.budget_min != null) params.budget_min = filters.budget_min
+    if (filters.budget_max != null) params.budget_max = filters.budget_max
+    if (filters.winning_amount_min != null) params.winning_amount_min = filters.winning_amount_min
+    if (filters.winning_amount_max != null) params.winning_amount_max = filters.winning_amount_max
+
+    saveAdvancedState()
+    const res = await getProjects(params)
     tableData.value = res.items
     total.value = res.total
   } finally {
@@ -274,5 +475,39 @@ async function handleDelete(id) {
   }
 }
 
-onMounted(() => loadData())
+onMounted(() => {
+  // 恢复高级搜索展开状态
+  try {
+    const savedOpen = localStorage.getItem(ADVANCED_OPEN_KEY)
+    if (savedOpen) showAdvanced.value = JSON.parse(savedOpen)
+  } catch { /* ignore */ }
+  // 恢复高级筛选值
+  const saved = loadAdvancedState()
+  if (saved) {
+    if (saved.region) filters.region = saved.region
+    if (saved.manager_id) filters.manager_id = saved.manager_id
+    if (saved.bidding_unit_id) filters.bidding_unit_id = saved.bidding_unit_id
+    if (saved.agency_id) filters.agency_id = saved.agency_id
+    if (saved.publish_platform_id) filters.publish_platform_id = saved.publish_platform_id
+    if (saved.partner_id) filters.partner_id = saved.partner_id
+    if (saved.bid_method) filters.bid_method = saved.bid_method
+    if (saved.is_prequalification !== undefined && saved.is_prequalification !== null) filters.is_prequalification = saved.is_prequalification
+    if (saved.bid_deadline_after) filters.bid_deadline_after = saved.bid_deadline_after
+    if (saved.bid_deadline_before) filters.bid_deadline_before = saved.bid_deadline_before
+    if (saved.budget_min != null) filters.budget_min = saved.budget_min
+    if (saved.budget_max != null) filters.budget_max = saved.budget_max
+    if (saved.winning_amount_min != null) filters.winning_amount_min = saved.winning_amount_min
+    if (saved.winning_amount_max != null) filters.winning_amount_max = saved.winning_amount_max
+    if (saved.keywordMatch) keywordMatch.value = saved.keywordMatch
+    if (saved.bid_deadline_after && saved.bid_deadline_before) {
+      bidDeadlineDateRange.value = [saved.bid_deadline_after, saved.bid_deadline_before]
+    }
+  }
+  _initialized = true
+  loadData()
+})
+
+watch(showAdvanced, (val) => {
+  localStorage.setItem(ADVANCED_OPEN_KEY, JSON.stringify(val))
+})
 </script>

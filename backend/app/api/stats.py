@@ -4,7 +4,7 @@ import json
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case, text, literal
 
 from ..core.database import get_db
 from ..core.security import get_current_user
@@ -22,7 +22,7 @@ def get_overview(
 ):
     """Dashboard overview: status counts, monthly summary, upcoming deadlines, unreturned deposits."""
 
-    # --- status_counts ---
+    # --- status_counts (已经是 SQL GROUP BY，无需改动) ---
     status_rows = (
         db.query(ProjectInfo.status, func.count(ProjectInfo.id))
         .group_by(ProjectInfo.status)
@@ -33,24 +33,27 @@ def get_overview(
         status_key = status_val.value if hasattr(status_val, "value") else str(status_val)
         status_counts[status_key] = count
 
-    # --- monthly_summary: projects submitted/won/lost this month ---
+    # --- monthly_summary: 使用 SQL 聚合替代 Python 遍历 ---
     today = date.today()
     month_start = today.replace(day=1)
     result_statuses = [ProjectStatus.submitted, ProjectStatus.won, ProjectStatus.lost]
 
-    month_projects = (
-        db.query(ProjectInfo)
+    month_row = (
+        db.query(
+            func.count(ProjectInfo.id).label("total"),
+            func.sum(case((ProjectInfo.status == ProjectStatus.won, 1), else_=0)).label("wins"),
+        )
         .filter(
             ProjectInfo.status.in_(result_statuses),
             ProjectInfo.updated_at >= month_start,
         )
-        .all()
+        .first()
     )
-    month_bids = len(month_projects)
-    month_wins = sum(1 for p in month_projects if p.status == ProjectStatus.won)
+    month_bids = month_row.total or 0
+    month_wins = month_row.wins or 0
     month_win_rate = round(month_wins / month_bids, 4) if month_bids > 0 else 0.0
 
-    # --- upcoming_deadlines ---
+    # --- upcoming_deadlines (结果集小，保持不变) ---
     deadline_end = today + timedelta(days=7)
     active_statuses = [ProjectStatus.published, ProjectStatus.preparing]
 
@@ -73,7 +76,7 @@ def get_overview(
         for p in upcoming
     ]
 
-    # --- deposit_not_returned ---
+    # --- deposit_not_returned (结果集小，保持不变) ---
     deposit_not_returned_list = (
         db.query(ProjectInfo)
         .filter(
@@ -112,8 +115,15 @@ def get_win_rate(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Win rate statistics grouped by time period."""
-    query = db.query(ProjectInfo).filter(
+    """Win rate statistics — SQL 按月聚合，Python 合并为季度/年."""
+    # 统一按月 SQL 聚合（最多产生几十行，极快）
+    month_expr = func.strftime("%Y-%m", ProjectInfo.updated_at)
+
+    query = db.query(
+        month_expr.label("ym"),
+        func.count(ProjectInfo.id).label("total_bids"),
+        func.sum(case((ProjectInfo.status == ProjectStatus.won, 1), else_=0)).label("wins"),
+    ).filter(
         ProjectInfo.status.in_([ProjectStatus.won, ProjectStatus.lost])
     )
 
@@ -126,37 +136,34 @@ def get_win_rate(
     if bidding_type:
         query = query.filter(ProjectInfo.bidding_type == bidding_type)
 
-    projects = query.all()
+    month_rows = query.group_by(month_expr).order_by(month_expr).all()
 
-    groups = defaultdict(lambda: {"total": 0, "wins": 0})
-    for p in projects:
-        updated = p.updated_at
-        if updated is None:
-            continue
+    # 按周期合并（月度数据行很少，Python 处理微不足道）
+    groups = defaultdict(lambda: {"total_bids": 0, "wins": 0})
+    for row in month_rows:
+        ym = row.ym
         if period == "month":
-            label = updated.strftime("%Y-%m")
+            label = ym
         elif period == "quarter":
-            q = (updated.month - 1) // 3 + 1
-            label = f"{updated.year}-Q{q}"
+            y, m = ym.split("-")
+            q = (int(m) - 1) // 3 + 1
+            label = f"{y}-Q{q}"
         elif period == "year":
-            label = str(updated.year)
+            label = ym[:4]
         else:
-            label = updated.strftime("%Y-%m")
-        groups[label]["total"] += 1
-        if p.status == ProjectStatus.won:
-            groups[label]["wins"] += 1
+            label = ym
+        groups[label]["total_bids"] += row.total_bids
+        groups[label]["wins"] += row.wins or 0
 
-    response = []
-    for label in sorted(groups.keys()):
-        total = groups[label]["total"]
-        wins = groups[label]["wins"]
-        response.append({
+    return [
+        {
             "period_label": label,
-            "total_bids": total,
-            "wins": wins,
-            "win_rate": round(wins / total, 4) if total > 0 else 0.0,
-        })
-    return response
+            "total_bids": data["total_bids"],
+            "wins": data["wins"],
+            "win_rate": round(data["wins"] / data["total_bids"], 4) if data["total_bids"] > 0 else 0.0,
+        }
+        for label, data in sorted(groups.items())
+    ]
 
 
 @router.get("/competitors")
@@ -164,56 +171,52 @@ def get_competitors(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Competitor analysis from competitors JSON field."""
-    projects = db.query(ProjectInfo).filter(ProjectInfo.competitors.isnot(None)).all()
+    """Competitor analysis — 使用 SQLite json_each() 替代 Python 全表遍历."""
+    # 使用原生 SQL 的 json_each() 展开 competitors JSON 数组
+    # 同时兼容旧格式 org_id 和新格式 org_ids
+    raw_sql = text("""
+        SELECT
+            COALESCE(
+                json_extract(je.value, '$.org_ids[0]'),
+                json_extract(je.value, '$.org_id')
+            ) AS org_id,
+            COUNT(*) AS encounter_count,
+            SUM(CASE WHEN pi.is_won = 0 AND pi.is_bid_failed = 0 THEN 1 ELSE 0 END) AS win_count
+        FROM project_infos pi, json_each(pi.competitors) je
+        WHERE pi.competitors IS NOT NULL
+            AND pi.competitors != '[]'
+            AND pi.competitors != ''
+            AND COALESCE(
+                json_extract(je.value, '$.org_ids[0]'),
+                json_extract(je.value, '$.org_id')
+            ) IS NOT NULL
+        GROUP BY org_id
+        ORDER BY encounter_count DESC
+    """)
 
-    org_ids = set()
-    competitor_records = []
+    rows = db.execute(raw_sql).fetchall()
 
-    for p in projects:
-        competitors = p.competitors
-        if not competitors:
-            continue
-        if isinstance(competitors, str):
-            try:
-                competitors = json.loads(competitors)
-            except (json.JSONDecodeError, TypeError):
-                continue
-        if not isinstance(competitors, list):
-            continue
-        competitor_records.append((p, competitors))
-        for comp in competitors:
-            if isinstance(comp, dict) and "org_id" in comp:
-                org_ids.add(comp["org_id"])
-
+    org_ids = [row[0] for row in rows if row[0] is not None]
     org_map = {}
     if org_ids:
         orgs = db.query(Organization).filter(Organization.id.in_(org_ids)).all()
-        for org in orgs:
-            org_map[org.id] = org.name
-
-    stats = defaultdict(lambda: {"encounter_count": 0, "win_count": 0})
-    for p, competitors in competitor_records:
-        for comp in competitors:
-            if not isinstance(comp, dict) or "org_id" not in comp:
-                continue
-            org_id = comp["org_id"]
-            stats[org_id]["encounter_count"] += 1
-            if not p.is_won:
-                stats[org_id]["win_count"] += 1
+        org_map = {o.id: o.name for o in orgs}
 
     response = []
-    for org_id, data in stats.items():
-        encounter_count = data["encounter_count"]
-        win_count = data["win_count"]
+    for row in rows:
+        oid = row[0]
+        if oid is None:
+            continue
+        encounter_count = row[1]
+        win_count = row[2] or 0
         response.append({
-            "org_id": org_id,
-            "org_name": org_map.get(org_id, f"未知机构({org_id})"),
+            "org_id": oid,
+            "org_name": org_map.get(oid, f"未知机构({oid})"),
             "encounter_count": encounter_count,
             "win_count": win_count,
             "win_rate": round(win_count / encounter_count, 4) if encounter_count > 0 else 0.0,
         })
-    response.sort(key=lambda x: x["encounter_count"], reverse=True)
+
     return response
 
 

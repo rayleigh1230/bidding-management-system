@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, date
 
-from sqlalchemy import String, Text, Enum, DateTime, Date, Integer, ForeignKey, JSON, Boolean, Numeric
+from sqlalchemy import String, Text, Enum, DateTime, Date, Integer, ForeignKey, JSON, Boolean, Numeric, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..core.database import Base
@@ -128,3 +128,12 @@ class ProjectInfo(Base):
     contract_status: Mapped[str] = mapped_column(Enum(ContractStatus), default=ContractStatus.none)
     contract_amount: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
     result_notes: Mapped[str] = mapped_column(Text, default="")
+
+    __table_args__ = (
+        Index('ix_project_status', 'status'),
+        Index('ix_project_bidding_type', 'bidding_type'),
+        Index('ix_project_bid_deadline', 'bid_deadline'),
+        Index('ix_project_updated_at', 'updated_at'),
+        Index('ix_project_has_deposit', 'has_deposit'),
+        Index('ix_project_parent_project_id', 'parent_project_id'),
+    )

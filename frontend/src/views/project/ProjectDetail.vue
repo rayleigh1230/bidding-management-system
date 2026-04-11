@@ -897,7 +897,7 @@ async function loadUsers() {
 
 async function loadOrgNames() {
   try {
-    const res = await getOrganizations({ page_size: 100 })
+    const res = await getOrganizations({ page_size: 500 })
     for (const org of (res.items || [])) {
       orgMap.value[org.id] = org
     }

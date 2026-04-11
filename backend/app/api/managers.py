@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/managers", tags=["经办人管理"])
 def list_managers(
     keyword: str = Query("", description="搜索关键词"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    page_size: int = Query(20, ge=1, le=500, description="每页条数"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):

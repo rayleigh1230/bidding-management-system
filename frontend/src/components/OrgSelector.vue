@@ -80,7 +80,7 @@ async function preloadOptions() {
   if (loaded) return
   loaded = true
   try {
-    const params = { page_size: 100 }
+    const params = { page_size: 500 }
     if (props.excludeOurs) params.exclude_type = 'ours'
     const res = await getOrganizations(params)
     options.value = res.items
@@ -93,7 +93,7 @@ async function handleSearch(query) {
   searchTimer = setTimeout(async () => {
     loading.value = true
     try {
-      const params = { keyword: query, page_size: 50 }
+      const params = { keyword: query, page_size: 200 }
       if (props.excludeOurs) params.exclude_type = 'ours'
       const res = await getOrganizations(params)
       options.value = res.items
@@ -139,7 +139,7 @@ watch(() => props.modelValue, (val) => {
     const existingIds = new Set(options.value.map(o => o.id))
     const missingIds = val.filter(id => !existingIds.has(id))
     if (missingIds.length) {
-      getOrganizations({ page_size: 100 }).then(res => {
+      getOrganizations({ page_size: 500 }).then(res => {
         const allOrgs = res.items || []
         const missing = allOrgs.filter(o => missingIds.includes(o.id))
         options.value = [...missing, ...options.value]
