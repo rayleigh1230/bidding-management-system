@@ -55,7 +55,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 | Section | Columns cover | Visible when |
 |---------|--------------|-------------|
 | 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, parent_project_id (入围分项关联父入围标), etc. | Always |
-| 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, is_prequalification (是否入围标), is_registered (虚拟字段，从 status 推导), etc. | status >= 已发公告 |
+| 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, is_prequalification (是否入围标), is_multi_lot (是否多标段), is_registered (虚拟字段，从 status 推导), etc. | status >= 已发公告 |
 | 投标信息 | partner_ids, bid_method, is_consortium_lead, deposit fields, our_price, etc. | status >= 准备投标 |
 | 投标结果 | competitors (含 org_ids/price/score/is_winning), scoring_details, is_won + is_bid_failed (三态：已中标/未中标/流标), winning_org_ids (自动推导), winning_price/amount, result_deposit_status, contract fields, etc. | status >= 已投标 |
 
@@ -72,6 +72,7 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 跟进中 →(publish)→ 已发公告 →(fill deadline)→ 未报名 →(check is_registered)→ 已报名 →(prepare)→ 准备投标 →(submit)→ 已投标 →(is_won/is_bid_failed)→ 已中标/未中标/已流标
   └→(abandon)→ 已放弃 (any stage)
 ```
+多标段父项目不参与上述流程，其状态由子标段自动推导（截止到已投标）。
 Flow endpoints only change the status field — no new records are created:
 - `POST /api/projects/{id}/publish` — 跟进中 → 已发公告
 - `PUT /api/projects/{id}` with `registration_deadline`/`is_registered` — 已发公告 ↔ 未报名 ↔ 已报名 (auto-derive: no deadline=已发公告, deadline+unchecked=未报名, deadline+checked=已报名)
@@ -90,7 +91,7 @@ Flow endpoints only change the status field — no new records are created:
 `list_projects` endpoint supports 23 query parameters for filtering:
 - **Basic**: `keyword` (project name, with `keyword_match`="fuzzy"/"exact"), `status`, `bidding_type`
 - **Organization**: `bidding_unit_id`, `agency_id`, `publish_platform_id`, `manager_id` (JSON array via `json_each`), `partner_id` (JSON array via `json_each`)
-- **Enum/Bool**: `bid_method`, `is_prequalification`, `is_won`
+- **Enum/Bool**: `bid_method`, `is_prequalification`, `is_multi_lot`, `is_won`
 - **Date range**: `created_after`/`created_before`, `bid_deadline_after`/`bid_deadline_before`
 - **Amount range**: `budget_min`/`budget_max`, `winning_amount_min`/`winning_amount_max`
 - **Pagination**: `page`, `page_size`
@@ -120,6 +121,7 @@ Flow endpoints only change the status field — no new records are created:
 - **Bid deposit two-state model**: `DepositStatus` enum (`无`/`未缴纳`/`已缴纳`) for bid info section's `deposit_status` field. `ResultDepositStatus` enum (`未收回`/`已收回`) for result section's `result_deposit_status` field. Submit endpoint sets `result_deposit_status=未收回` only when `deposit_status=已缴纳`. Result section's deposit UI only shows when `deposit_status=已缴纳`. `enrich_project()` computes `deposit_status_display` field: shows 缴纳状态 before 已投标, shows 收回状态 from 已投标 onward.
 - **OrgMap loading**: `loadOrgNames()` uses `page_size=100` (backend max). Previously used 500 which caused 422 error and empty orgMap, breaking all org-dependent features.
 - **入围分项 (shortlisting sub-item)**: `BiddingType.prequalification` bidding type. Links to a parent 入围标 project via `parent_project_id` (self-referential FK). Only shows parent selector when `bidding_type="入围分项"`. Parent selector filters projects by `is_prequalification=true` AND `status=已中标`. Competitors are initially copied from parent (via `POST /api/projects/{id}/sync-competitors`), then maintained independently. "从父项目同步参标单位" button allows manual re-sync. When bidding_type is 入围分项, the "是否入围标" switch is hidden to prevent logic conflicts.
+- **多标段 (multi-lot)**: `is_multi_lot` boolean field (default=false) marks a project as a multi-lot parent container. Parent project does NOT participate in bidding — it only serves as a container/summary. Child lots are full independent projects with `parent_project_id` pointing to the parent. Key differences from 入围分项: (1) Parent's status is auto-derived from the furthest child lot status (up to 已投标; won/lost/failed_bid don't sync upward). If all children are abandoned, parent becomes 已放弃. (2) Child lots share only the project name from the parent on creation, all other fields are independent. (3) Multi-lot parents block all flow operations (publish/prepare/submit/abandon). (4) Child lot status changes trigger `recalc_multi_lot_parent_status()` via all flow endpoints and update. (5) Deleting a multi-lot parent cascades to delete all child lots. (6) `is_multi_lot` and `is_prequalification` are mutually exclusive. (7) `GET /api/projects/{id}/lots` endpoint returns child lots for a multi-lot parent. (8) `is_multi_lot` switch appears in project basic info card during creation and while status is 跟进中. (9) ProjectList has expandable rows showing child lots; ProjectDetail uses tab-based navigation for multi-lot parents (summary tab + per-lot tabs + add lot dialog). (10) Stats/Dashboard exclude multi-lot parent projects (`is_multi_lot == False` filter).
 - **Selector preload**: `PlatformSelector` and `OrgSelector`/`ManagerSelector` all use `preloadOptions()` with `loaded` flag on mount + `watch(modelValue)` for lazy load. This ensures el-select always has options for displaying names (not raw IDs) after save/reload.
 - **loadProject watcher guard**: `_updatingFromWinning` flag wraps `resultForm` assignment in `loadProject()` to prevent `is_won` watcher from interfering during data loading. Without this, the watcher could reset competitors' `is_winning` flags before `ensureOurCompanyInCompetitors()` runs.
 - **Column config persistence**: `ProjectList.vue` uses `watch(selectedColumnKeys)` (not `@change`) to save column config to localStorage. Each status tab has its own storage key (`project_list_columns_${status}`).

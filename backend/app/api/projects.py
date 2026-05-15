@@ -18,6 +18,48 @@ from ..models.user import User
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from ..services.logger import log_operation
 
+# ---- 多标段父项目状态推导 ----
+
+_STATUS_PRIORITY = {
+    ProjectStatus.following: 0,
+    ProjectStatus.published: 1,
+    ProjectStatus.not_registered: 2,
+    ProjectStatus.registered: 3,
+    ProjectStatus.preparing: 4,
+    ProjectStatus.submitted: 5,
+}
+
+
+def recalc_multi_lot_parent_status(parent_id: int, db: Session):
+    """当子标段状态变更时，重新计算多标段父项目的状态。
+    状态跟随截止到"已投标"，已中标/未中标/已流标不再同步；
+    如果所有子标段都已放弃，父项目也变为已放弃。"""
+    parent = db.query(ProjectInfo).filter(ProjectInfo.id == parent_id).first()
+    if not parent or not parent.is_multi_lot:
+        return
+
+    children = db.query(ProjectInfo).filter(
+        ProjectInfo.parent_project_id == parent_id
+    ).all()
+
+    if not children:
+        return
+
+    if all(c.status == ProjectStatus.abandoned for c in children):
+        parent.status = ProjectStatus.abandoned
+    else:
+        active = [c for c in children if c.status != ProjectStatus.abandoned]
+        if not active:
+            return
+        max_priority = max(_STATUS_PRIORITY.get(c.status, 0) for c in active)
+        for s, p in _STATUS_PRIORITY.items():
+            if p == max_priority:
+                parent.status = s
+                break
+
+    db.commit()
+
+
 router = APIRouter(prefix="/api/projects", tags=["项目管理"])
 
 
@@ -118,7 +160,7 @@ def _parse_json_list(raw):
     return []
 
 
-def _enrich_project_with_maps(project: ProjectInfo, org_map: dict, manager_map: dict, platform_map: dict, user_map: dict, parent_map: dict) -> dict:
+def _enrich_project_with_maps(project: ProjectInfo, org_map: dict, manager_map: dict, platform_map: dict, user_map: dict, parent_map: dict, parent_map_meta: dict = None) -> dict:
     """使用预加载的映射表填充 enrich 字段（无数据库查询）"""
     data = ProjectResponse.model_validate(project).model_dump()
 
@@ -185,6 +227,12 @@ def _enrich_project_with_maps(project: ProjectInfo, org_map: dict, manager_map: 
 
     # parent_project_name
     data["parent_project_name"] = parent_map.get(project.parent_project_id) if project.parent_project_id else None
+
+    # parent_is_multi_lot
+    if parent_map_meta and project.parent_project_id:
+        data["parent_is_multi_lot"] = parent_map_meta.get(project.parent_project_id, False)
+    else:
+        data["parent_is_multi_lot"] = False
 
     # deposit_status_display
     if not project.has_deposit:
@@ -261,11 +309,13 @@ def enrich_project(project: ProjectInfo, db: Session) -> dict:
             user_map[u.id] = u.display_name
 
     parent_map = {}
+    parent_map_meta = {}
     if parent_ids:
         for pp in db.query(ProjectInfo).filter(ProjectInfo.id.in_(parent_ids)).all():
             parent_map[pp.id] = pp.project_name
+            parent_map_meta[pp.id] = pp.is_multi_lot
 
-    return _enrich_project_with_maps(project, org_map, manager_map, platform_map, user_map, parent_map)
+    return _enrich_project_with_maps(project, org_map, manager_map, platform_map, user_map, parent_map, parent_map_meta)
 
 
 def enrich_project_list(projects: list, db: Session) -> list:
@@ -325,12 +375,14 @@ def enrich_project_list(projects: list, db: Session) -> list:
             user_map[u.id] = u.display_name
 
     parent_map = {}
+    parent_map_meta = {}
     if parent_ids:
         for pp in db.query(ProjectInfo).filter(ProjectInfo.id.in_(parent_ids)).all():
             parent_map[pp.id] = pp.project_name
+            parent_map_meta[pp.id] = pp.is_multi_lot
 
     # 第三轮：组装结果
-    return [_enrich_project_with_maps(p, org_map, manager_map, platform_map, user_map, parent_map) for p in projects]
+    return [_enrich_project_with_maps(p, org_map, manager_map, platform_map, user_map, parent_map, parent_map_meta) for p in projects]
 
 
 # ---- JSON list fields that need serialization ----
@@ -348,6 +400,7 @@ def list_projects(
     bidding_type: str = Query("", description="招标类型"),
     region: str = Query("", description="地区"),
     is_prequalification: Optional[bool] = Query(None, description="是否入围标"),
+    is_multi_lot: Optional[bool] = Query(None, description="是否多标段"),
     manager_id: Optional[int] = Query(None, description="负责人ID"),
     bidding_unit_id: Optional[int] = Query(None, description="招标单位ID"),
     agency_id: Optional[int] = Query(None, description="代理单位ID"),
@@ -393,6 +446,9 @@ def list_projects(
     # 是否入围标
     if is_prequalification is not None:
         query = query.filter(ProjectInfo.is_prequalification == is_prequalification)
+    # 是否多标段
+    if is_multi_lot is not None:
+        query = query.filter(ProjectInfo.is_multi_lot == is_multi_lot)
     # 负责人（JSON 数组包含）
     if manager_id:
         query = query.filter(text(
@@ -463,15 +519,36 @@ def create_project(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
+    # ---- 多标段校验 ----
+    project_name = data.project_name
+    if data.parent_project_id:
+        parent = db.query(ProjectInfo).filter(ProjectInfo.id == data.parent_project_id).first()
+        if not parent:
+            raise HTTPException(status_code=404, detail="父项目不存在")
+        # 子标段不能也是多标段
+        if parent.is_multi_lot and data.is_multi_lot:
+            raise HTTPException(status_code=400, detail="子标段不能也是多标段父项目")
+        # 多标段子标段不能设为入围分项
+        if parent.is_multi_lot and data.bidding_type == "入围分项":
+            raise HTTPException(status_code=400, detail="多标段子标段不能设置为入围分项类型")
+        # 子标段继承父项目名称（如果未指定）
+        if parent.is_multi_lot and not project_name:
+            project_name = parent.project_name
+
+    # 互斥约束
+    if data.is_multi_lot and data.bidding_type == "入围分项":
+        raise HTTPException(status_code=400, detail="多标段项目不能设置为入围分项类型")
+
     project = ProjectInfo(
         bidding_type=data.bidding_type,
-        project_name=data.project_name,
+        project_name=project_name,
         bidding_unit_id=data.bidding_unit_id,
         region=data.region,
         manager_ids=json.dumps(data.manager_ids, ensure_ascii=False) if data.manager_ids else [],
         status=ProjectStatus.following,
         description=data.description,
         parent_project_id=data.parent_project_id,
+        is_multi_lot=bool(data.is_multi_lot),
         created_by=current_user.id,
     )
     db.add(project)
@@ -508,6 +585,17 @@ def update_project(
     update_data = data.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="没有需要更新的字段")
+
+    # 互斥约束
+    new_is_multi_lot = update_data.get("is_multi_lot", project.is_multi_lot)
+    new_is_prequal = update_data.get("is_prequalification", project.is_prequalification)
+    if new_is_multi_lot and new_is_prequal:
+        raise HTTPException(status_code=400, detail="多标段项目不能同时作为入围标")
+
+    # 多标段父项目：禁止手动修改 status（由 auto-recalc 接管）
+    orig_status = project.status
+    if project.is_multi_lot and "status" in update_data:
+        del update_data["status"]
 
     for field, value in update_data.items():
         if field == "is_registered":
@@ -635,6 +723,11 @@ def update_project(
     log_operation(db, current_user.id, "update", "project", project.id, f"更新项目: {project.project_name}")
     db.commit()
     db.refresh(project)
+
+    # 多标段子标段：状态变更后触发父项目重算
+    if project.parent_project_id and project.status != orig_status:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
+
     return enrich_project(project, db)
 
 
@@ -647,6 +740,18 @@ def delete_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 多标段父项目：级联删除所有子标段
+    if project.is_multi_lot:
+        children = db.query(ProjectInfo).filter(
+            ProjectInfo.parent_project_id == project_id
+        ).all()
+        for child in children:
+            log_operation(db, current_user.id, "delete", "project", child.id,
+                          f"级联删除子标段: {child.project_name} (父项目ID={project_id})")
+            db.delete(child)
+        if children:
+            db.flush()
 
     log_operation(db, current_user.id, "delete", "project", project.id, f"删除项目: {project.project_name}")
     db.delete(project)
@@ -700,6 +805,26 @@ def sync_competitors(
     return enrich_project(project, db)
 
 
+@router.get("/{project_id}/lots", response_model=dict)
+def list_project_lots(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """获取多标段父项目的所有子标段"""
+    parent = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
+    if not parent:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not parent.is_multi_lot:
+        raise HTTPException(status_code=400, detail="该项目不是多标段父项目")
+
+    lots = db.query(ProjectInfo).filter(
+        ProjectInfo.parent_project_id == project_id
+    ).order_by(ProjectInfo.id).all()
+
+    return {"items": enrich_project_list(lots, db), "total": len(lots)}
+
+
 # ---- Flow endpoints (status changes only, no record creation) ----
 
 @router.post("/{project_id}/publish", response_model=dict)
@@ -711,12 +836,17 @@ def publish_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.is_multi_lot:
+        raise HTTPException(status_code=400, detail="多标段父项目不参与投标流程，请在子标段中操作")
     if project.status != ProjectStatus.following:
         raise HTTPException(status_code=400, detail="只有跟进中的项目才能发布公告")
 
     project.status = ProjectStatus.published
     log_operation(db, current_user.id, "advance", "project", project.id, f"发布招标公告: {project.project_name}")
     db.commit()
+    # 子标段状态变更后重算父项目
+    if project.parent_project_id:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
     return {"message": "发布成功"}
 
 
@@ -729,12 +859,16 @@ def prepare_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.is_multi_lot:
+        raise HTTPException(status_code=400, detail="多标段父项目不参与投标流程，请在子标段中操作")
     if project.status not in (ProjectStatus.published, ProjectStatus.not_registered, ProjectStatus.registered):
         raise HTTPException(status_code=400, detail="只有已发公告/未报名/已报名的项目才能准备投标")
 
     project.status = ProjectStatus.preparing
     log_operation(db, current_user.id, "advance", "project", project.id, f"准备投标: {project.project_name}")
     db.commit()
+    if project.parent_project_id:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
     return {"message": "准备投标成功"}
 
 
@@ -747,6 +881,8 @@ def submit_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.is_multi_lot:
+        raise HTTPException(status_code=400, detail="多标段父项目不参与投标流程，请在子标段中操作")
     if project.status != ProjectStatus.preparing:
         raise HTTPException(status_code=400, detail="只有准备投标的项目才能提交投标")
 
@@ -758,6 +894,8 @@ def submit_project(
 
     log_operation(db, current_user.id, "advance", "project", project.id, f"提交投标: {project.project_name}")
     db.commit()
+    if project.parent_project_id:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
     return {"message": "提交投标成功"}
 
 
@@ -771,6 +909,8 @@ def abandon_project(
     project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.is_multi_lot:
+        raise HTTPException(status_code=400, detail="多标段父项目不参与投标流程，请在子标段中操作")
     if project.status == ProjectStatus.abandoned:
         raise HTTPException(status_code=400, detail="项目已放弃")
 
@@ -781,4 +921,6 @@ def abandon_project(
     reason = body.get("reason", "") if body else ""
     log_operation(db, current_user.id, "abandon", "project", project.id, f"放弃项目: {project.project_name}, 原因: {reason}")
     db.commit()
+    if project.parent_project_id:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
     return {"message": "已放弃该项目"}

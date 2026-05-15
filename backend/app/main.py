@@ -63,6 +63,14 @@ def on_startup():
             conn.commit()
         print("Migration: added is_bid_failed column to project_infos")
 
+    # Auto-migrate: add is_multi_lot column to project_infos if not exists
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'is_multi_lot' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN is_multi_lot BOOLEAN DEFAULT 0"))
+            conn.commit()
+        print("Migration: added is_multi_lot column to project_infos")
+
     # Create default admin user
     from sqlalchemy.orm import Session
     from .models.user import User

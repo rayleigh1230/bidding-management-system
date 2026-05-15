@@ -22,9 +22,10 @@ def get_overview(
 ):
     """Dashboard overview: status counts, monthly summary, upcoming deadlines, unreturned deposits."""
 
-    # --- status_counts (已经是 SQL GROUP BY，无需改动) ---
+    # --- status_counts ---
     status_rows = (
         db.query(ProjectInfo.status, func.count(ProjectInfo.id))
+        .filter(ProjectInfo.is_multi_lot == False)  # noqa: E712
         .group_by(ProjectInfo.status)
         .all()
     )
@@ -44,6 +45,7 @@ def get_overview(
             func.sum(case((ProjectInfo.status == ProjectStatus.won, 1), else_=0)).label("wins"),
         )
         .filter(
+            ProjectInfo.is_multi_lot == False,  # noqa: E712
             ProjectInfo.status.in_(result_statuses),
             ProjectInfo.updated_at >= month_start,
         )
@@ -60,6 +62,7 @@ def get_overview(
     upcoming = (
         db.query(ProjectInfo)
         .filter(
+            ProjectInfo.is_multi_lot == False,  # noqa: E712
             ProjectInfo.bid_deadline >= today,
             ProjectInfo.bid_deadline <= deadline_end,
             ProjectInfo.status.in_(active_statuses),
@@ -80,6 +83,7 @@ def get_overview(
     deposit_not_returned_list = (
         db.query(ProjectInfo)
         .filter(
+            ProjectInfo.is_multi_lot == False,  # noqa: E712
             ProjectInfo.has_deposit == True,  # noqa: E712
             ProjectInfo.result_deposit_status == "未收回",
         )
@@ -124,6 +128,7 @@ def get_win_rate(
         func.count(ProjectInfo.id).label("total_bids"),
         func.sum(case((ProjectInfo.status == ProjectStatus.won, 1), else_=0)).label("wins"),
     ).filter(
+        ProjectInfo.is_multi_lot == False,  # noqa: E712
         ProjectInfo.status.in_([ProjectStatus.won, ProjectStatus.lost])
     )
 
@@ -183,7 +188,8 @@ def get_competitors(
             COUNT(*) AS encounter_count,
             SUM(CASE WHEN pi.is_won = 0 AND pi.is_bid_failed = 0 THEN 1 ELSE 0 END) AS win_count
         FROM project_infos pi, json_each(pi.competitors) je
-        WHERE pi.competitors IS NOT NULL
+        WHERE pi.is_multi_lot = 0
+            AND pi.competitors IS NOT NULL
             AND pi.competitors != '[]'
             AND pi.competitors != ''
             AND COALESCE(
@@ -228,6 +234,7 @@ def get_deposits(
     """Deposit tracking: all projects with has_deposit=True."""
     projects = (
         db.query(ProjectInfo)
+        .filter(ProjectInfo.is_multi_lot == False)  # noqa: E712
         .filter(ProjectInfo.has_deposit == True)  # noqa: E712
         .all()
     )

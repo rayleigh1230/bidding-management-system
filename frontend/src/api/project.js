@@ -39,3 +39,7 @@ export function abandonProject(id, reason) {
 export function syncCompetitors(id) {
   return request.post(`/projects/${id}/sync-competitors`)
 }
+
+export function getProjectLots(projectId) {
+  return request.get(`/projects/${projectId}/lots`)
+}

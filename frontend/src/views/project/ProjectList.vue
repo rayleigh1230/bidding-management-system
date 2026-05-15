@@ -102,6 +102,13 @@
             </el-select>
           </el-col>
           <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
+            <div style="font-size: 12px; color: #909399; margin-bottom: 4px">是否多标段</div>
+            <el-select v-model="filters.is_multi_lot" placeholder="全部" clearable style="width: 100%">
+              <el-option label="是" :value="true" />
+              <el-option label="否" :value="false" />
+            </el-select>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
             <div style="font-size: 12px; color: #909399; margin-bottom: 4px">开标时间</div>
             <el-date-picker v-model="bidDeadlineDateRange" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-col>
@@ -128,7 +135,43 @@
       </div>
     </transition>
 
-    <el-table :data="tableData" v-loading="loading" border stripe :header-cell-style="{ whiteSpace: 'nowrap' }">
+    <el-table :data="tableData" v-loading="loading" border stripe row-key="id" :header-cell-style="{ whiteSpace: 'nowrap' }">
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div v-if="row.is_multi_lot" style="padding: 12px 24px" v-loading="row._loadingLots">
+            <div v-if="row.lots && row.lots.length" style="margin-bottom: 8px; color: #666; font-size: 13px">
+              共 {{ row.lots.length }} 个标段
+            </div>
+            <el-table v-if="row.lots && row.lots.length" :data="row.lots" size="small" border>
+              <el-table-column label="标段名称" min-width="100">
+                <template #default="{ row: lot }">
+                  <el-link type="primary" @click="$router.push(`/projects/${lot.id}`)">{{ lot.project_name }}</el-link>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="80">
+                <template #default="{ row: lot }">
+                  <el-tag size="small" :type="statusType(lot.status)">{{ statusLabel(lot.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="预算金额" width="100">
+                <template #default="{ row: lot }">{{ lot.budget_amount?.toLocaleString() || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="投标截止" width="100">
+                <template #default="{ row: lot }">{{ formatDate(lot.bid_deadline) }}</template>
+              </el-table-column>
+              <el-table-column label="中标金额" width="100">
+                <template #default="{ row: lot }">{{ lot.winning_amount_display || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="80">
+                <template #default="{ row: lot }">
+                  <el-button link type="primary" size="small" @click="$router.push(`/projects/${lot.id}`)">查看</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-else-if="row._lotsLoaded" style="color: #999; padding: 12px 0; text-align: center">暂无标段</div>
+          </div>
+        </template>
+      </el-table-column>
       <template v-for="col in visibleColumns" :key="col.key">
         <!-- ID -->
         <el-table-column v-if="col.key === 'id'" prop="id" label="ID" width="50" />
@@ -136,6 +179,7 @@
         <el-table-column v-else-if="col.key === 'project_name'" prop="project_name" label="项目名称" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <el-link type="primary" @click="$router.push(`/projects/${row.id}`)">{{ row.project_name }}</el-link>
+            <el-tag v-if="row.is_multi_lot" size="small" type="warning" style="margin-left: 4px">多标段</el-tag>
           </template>
         </el-table-column>
         <!-- 状态 -->
@@ -223,7 +267,7 @@
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Setting, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
-import { getProjects, deleteProject } from '../../api/project'
+import { getProjects, deleteProject, getProjectLots } from '../../api/project'
 import RegionCascader from '../../components/RegionCascader.vue'
 import ManagerSelector from '../../components/ManagerSelector.vue'
 import PlatformSelector from '../../components/PlatformSelector.vue'
@@ -310,6 +354,7 @@ const filters = reactive({
   region: [], manager_id: null, bidding_unit_id: null, agency_id: null,
   publish_platform_id: null, partner_id: null, bid_method: '',
   is_prequalification: null,
+  is_multi_lot: null,
   bid_deadline_after: '', bid_deadline_before: '',
   budget_min: null, budget_max: null,
   winning_amount_min: null, winning_amount_max: null,
@@ -318,6 +363,23 @@ const keywordMatch = ref('fuzzy')
 const showAdvanced = ref(false)
 const bidDeadlineDateRange = ref(null)
 let _initialized = false
+
+// 多标段展开行
+const expandedRows = ref([])
+
+async function handleExpandChange(row, expanded) {
+  if (!row.is_multi_lot) return
+  if (expanded && !row._lotsLoaded) {
+    row._loadingLots = true
+    try {
+      const res = await getProjectLots(row.id)
+      row.lots = res.items || []
+      row._lotsLoaded = true
+    } finally {
+      row._loadingLots = false
+    }
+  }
+}
 
 const ADVANCED_STORAGE_KEY = 'project_list_advanced_filters'
 const ADVANCED_OPEN_KEY = 'project_list_advanced_open'
@@ -332,6 +394,7 @@ function saveAdvancedState() {
     partner_id: filters.partner_id,
     bid_method: filters.bid_method,
     is_prequalification: filters.is_prequalification,
+    is_multi_lot: filters.is_multi_lot,
     bid_deadline_after: filters.bid_deadline_after,
     bid_deadline_before: filters.bid_deadline_before,
     budget_min: filters.budget_min,
@@ -360,6 +423,7 @@ function resetAdvancedFilters() {
   filters.partner_id = null
   filters.bid_method = ''
   filters.is_prequalification = null
+  filters.is_multi_lot = null
   filters.bid_deadline_after = ''
   filters.bid_deadline_before = ''
   filters.budget_min = null
@@ -376,7 +440,7 @@ watch(
   () => [
     filters.region, filters.manager_id, filters.bidding_unit_id,
     filters.agency_id, filters.publish_platform_id, filters.partner_id,
-    filters.bid_method, filters.is_prequalification,
+    filters.bid_method, filters.is_prequalification, filters.is_multi_lot,
     bidDeadlineDateRange.value,
     filters.budget_min, filters.budget_max,
     filters.winning_amount_min, filters.winning_amount_max,
@@ -449,6 +513,7 @@ async function loadData() {
     if (filters.partner_id) params.partner_id = filters.partner_id
     if (filters.bid_method) params.bid_method = filters.bid_method
     if (filters.is_prequalification !== null && filters.is_prequalification !== '') params.is_prequalification = filters.is_prequalification
+    if (filters.is_multi_lot !== null && filters.is_multi_lot !== '') params.is_multi_lot = filters.is_multi_lot
     if (filters.bid_deadline_after) params.bid_deadline_after = filters.bid_deadline_after
     if (filters.bid_deadline_before) params.bid_deadline_before = filters.bid_deadline_before
     if (filters.budget_min != null) params.budget_min = filters.budget_min
@@ -492,6 +557,7 @@ onMounted(() => {
     if (saved.partner_id) filters.partner_id = saved.partner_id
     if (saved.bid_method) filters.bid_method = saved.bid_method
     if (saved.is_prequalification !== undefined && saved.is_prequalification !== null) filters.is_prequalification = saved.is_prequalification
+    if (saved.is_multi_lot !== undefined && saved.is_multi_lot !== null) filters.is_multi_lot = saved.is_multi_lot
     if (saved.bid_deadline_after) filters.bid_deadline_after = saved.bid_deadline_after
     if (saved.bid_deadline_before) filters.bid_deadline_before = saved.bid_deadline_before
     if (saved.budget_min != null) filters.budget_min = saved.budget_min

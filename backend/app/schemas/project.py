@@ -12,6 +12,7 @@ class ProjectCreate(BaseModel):
     manager_ids: list[int] = []
     description: str = ""
     parent_project_id: Optional[int] = None
+    is_multi_lot: Optional[bool] = False
 
 
 class ProjectUpdate(BaseModel):
@@ -36,6 +37,7 @@ class ProjectUpdate(BaseModel):
     control_price_upper: Optional[float] = None
     control_price_lower: Optional[float] = None
     is_prequalification: Optional[bool] = None
+    is_multi_lot: Optional[bool] = None
     bid_specialist_id: Optional[int] = None
     bid_documents: Optional[list[str]] = None
     bidding_notes: Optional[str] = None
@@ -97,6 +99,7 @@ class ProjectResponse(BaseModel):
     control_price_upper: Optional[float] = None
     control_price_lower: Optional[float] = None
     is_prequalification: bool = False
+    is_multi_lot: bool = False
     bid_specialist_id: Optional[int] = None
     bid_documents: Any = []
     bidding_notes: str = ""
@@ -131,6 +134,7 @@ class ProjectResponse(BaseModel):
     result_notes: str = ""
     # Enriched fields
     parent_project_name: Optional[str] = None
+    parent_is_multi_lot: Optional[bool] = None
     bidding_unit_name: Optional[str] = None
     manager_names: Optional[list[str]] = None
     agency_name: Optional[str] = None

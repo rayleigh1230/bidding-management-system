@@ -5,6 +5,8 @@
         <template #content>
           <span>{{ isNew ? '新增项目' : project.project_name }}</span>
           <el-tag v-if="!isNew" :type="statusType(project.status)" style="margin-left: 8px">{{ statusLabel(project.status) }}</el-tag>
+          <el-tag v-if="isMultiLotParent" type="warning" size="small" style="margin-left: 8px">多标段</el-tag>
+          <el-tag v-if="isMultiLotChild" size="small" style="margin-left: 8px">标段</el-tag>
           <el-link v-if="!isNew && projectForm.parent_project_id" type="info" :underline="false" style="margin-left: 8px; font-size: 12px" @click="$router.push(`/projects/${projectForm.parent_project_id}`)">
             父项目：{{ parentProjectName }}
           </el-link>
@@ -12,8 +14,52 @@
       </el-page-header>
     </div>
 
-    <!-- 田字布局：4个卡片 -->
-    <div class="detail-grid">
+    <!-- 多标段父项目：Tab 切换 -->
+    <div v-if="isMultiLotParent && !isNew" style="margin-bottom: 16px">
+      <el-tabs :model-value="activeLotTab" @tab-click="handleLotTabClick">
+        <el-tab-pane name="__summary__" label="汇总" />
+        <el-tab-pane
+          v-for="lot in lotList"
+          :key="lot.id"
+          :name="String(lot.id)"
+          :label="lot.project_name || `标段 #${lot.id}`"
+        />
+        <el-tab-pane name="__add__" label="+ 添加标段" />
+      </el-tabs>
+    </div>
+
+    <!-- 多标段父项目汇总 Tab -->
+    <el-card v-if="isMultiLotParent && activeLotTab === '__summary__'">
+      <template #header><span>标段汇总</span></template>
+      <el-table :data="lotList" border size="small">
+        <el-table-column label="标段名称" min-width="120">
+          <template #default="{ row: lot }">
+            <el-link type="primary" @click="activeLotTab = String(lot.id); switchToLot(lot.id)">{{ lot.project_name }}</el-link>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80">
+          <template #default="{ row: lot }">
+            <el-tag size="small" :type="statusType(lot.status)">{{ statusLabel(lot.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="预算金额(元)" width="110">
+          <template #default="{ row: lot }">{{ lot.budget_amount?.toLocaleString() || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="我方报价" width="90">
+          <template #default="{ row: lot }">{{ lot.our_price_display || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="中标金额" width="100">
+          <template #default="{ row: lot }">{{ lot.winning_amount_display || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="中标单位" width="120">
+          <template #default="{ row: lot }">{{ (lot.winning_org_names || []).join(', ') || '-' }}</template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!lotList.length" style="color: #999; text-align: center; padding: 24px">暂无标段，点击"+ 添加标段"创建</div>
+    </el-card>
+
+    <!-- 田字布局：4个卡片（多标段父汇总时不显示） -->
+    <div v-if="!(isMultiLotParent && activeLotTab === '__summary__')" class="detail-grid">
       <!-- 左上：项目基本信息 (always visible) -->
       <el-card>
         <template #header><span>项目基本信息</span></template>
@@ -62,6 +108,9 @@
           </el-form-item>
           <el-form-item label="项目负责人">
             <ManagerSelector v-model="projectForm.manager_ids" :multiple="true" :disabled="!isNew && !isFollowing" style="width: 100%" />
+          </el-form-item>
+          <el-form-item v-if="isNew || isFollowing" label="多标段项目">
+            <el-switch v-model="projectForm.is_multi_lot" active-text="是（创建标段容器）" inactive-text="否" />
           </el-form-item>
           <el-form-item label="项目描述">
             <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!isNew && !isFollowing" />
@@ -388,12 +437,39 @@
       <el-button v-if="isNew" type="primary" :loading="saving" @click="handleSave">创建项目</el-button>
       <template v-if="!isNew">
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
-        <el-button v-if="isFollowing" type="success" @click="handlePublish">已发公告</el-button>
-        <el-button v-if="isPublished || isNotRegistered || isRegistered" type="warning" @click="handlePrepare">准备投标</el-button>
-        <el-button v-if="isPreparing" type="primary" @click="handleSubmit">提交投标</el-button>
-        <el-button v-if="canAbandon" type="danger" @click="showAbandonDialog = true">放弃</el-button>
+        <template v-if="!isMultiLotParent">
+          <el-button v-if="isFollowing" type="success" @click="handlePublish">已发公告</el-button>
+          <el-button v-if="isPublished || isNotRegistered || isRegistered" type="warning" @click="handlePrepare">准备投标</el-button>
+          <el-button v-if="isPreparing" type="primary" @click="handleSubmit">提交投标</el-button>
+          <el-button v-if="canAbandon" type="danger" @click="showAbandonDialog = true">放弃</el-button>
+        </template>
       </template>
     </div>
+
+    <!-- 创建标段对话框（自动继承父项目基本信息） -->
+    <el-dialog v-model="showCreateLotDialog" title="添加标段" width="520px">
+      <el-form :model="newLotForm" label-width="100px">
+        <el-form-item label="标段名称" required>
+          <el-input v-model="newLotForm.project_name" :placeholder="projectForm.project_name + ' - 标段X'" />
+        </el-form-item>
+        <el-form-item label="招标单位">
+          <span>{{ getOrgName(newLotForm.bidding_unit_id) || '未设置' }}</span>
+          <el-tag size="small" type="info" style="margin-left: 8px">继承自父项目</el-tag>
+        </el-form-item>
+        <el-form-item label="所属地区">
+          <span>{{ formatRegionDisplay(newLotForm.region) || '未设置' }}</span>
+          <el-tag size="small" type="info" style="margin-left: 8px">继承自父项目</el-tag>
+        </el-form-item>
+        <el-form-item label="项目负责人">
+          <span>{{ (newLotForm.manager_ids || []).map(id => getManagerName(id)).filter(Boolean).join(', ') || '未设置' }}</span>
+          <el-tag size="small" type="info" style="margin-left: 8px">继承自父项目</el-tag>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCreateLotDialog = false">取消</el-button>
+        <el-button type="primary" :loading="creatingLot" @click="handleCreateLot">创建</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 放弃对话框 -->
     <el-dialog v-model="showAbandonDialog" title="放弃项目" width="400px">
@@ -418,7 +494,7 @@ import { Delete } from '@element-plus/icons-vue'
 import {
   getProject, createProject, updateProject,
   publishProject, prepareProject, submitProject, abandonProject,
-  getProjects, syncCompetitors,
+  getProjects, syncCompetitors, getProjectLots,
 } from '../../api/project'
 import { getUsers } from '../../api/user'
 import { getOrganizations } from '../../api/dict'
@@ -437,6 +513,152 @@ const orgMap = ref({})  // id -> { id, name }
 const parentProjectName = ref('')
 const parentProjectOptions = ref([])  // 远程搜索入围标项目选项
 
+// ---- 多标段支持 ----
+const lotList = ref([])
+const activeLotTab = ref('')
+const showCreateLotDialog = ref(false)
+const creatingLot = ref(false)
+const newLotForm = ref({
+  project_name: '', bidding_unit_id: null, region: [], manager_ids: [],
+})
+
+async function loadLots() {
+  if (!isMultiLotParent.value) return
+  try {
+    const res = await getProjectLots(project.value.id)
+    lotList.value = res.items || []
+    if (!activeLotTab.value && lotList.value.length) {
+      activeLotTab.value = '__summary__'
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveCurrentLot() {
+  const currentLotId = parseInt(activeLotTab.value)
+  if (isNaN(currentLotId)) return
+  try {
+    const data = collectSaveData()
+    await updateProject(currentLotId, data)
+  } catch { /* 静默忽略 */ }
+}
+
+async function switchToLot(lotId) {
+  if (isNaN(lotId)) return
+  try {
+    const data = await getProject(lotId)
+    // 将子标段数据映射到当前表单
+    project.value = data
+    let region = []
+    if (data.region) { try { region = JSON.parse(data.region) } catch { region = [] } }
+    let managerIds = data.manager_ids || []
+    if (typeof managerIds === 'string') { try { managerIds = JSON.parse(managerIds) } catch { managerIds = [] } }
+    projectForm.value = {
+      bidding_type: data.bidding_type, project_name: data.project_name,
+      bidding_unit_id: data.bidding_unit_id, region, manager_ids: managerIds,
+      description: data.description || '',
+      parent_project_id: data.parent_project_id || null,
+    }
+    if (data.parent_project_id) {
+      parentProjectName.value = data.parent_project_name || ''
+      parentProjectOptions.value = [{ id: data.parent_project_id, project_name: data.parent_project_name || `项目 #${data.parent_project_id}` }]
+    }
+    biddingForm.value = {
+      agency_id: data.agency_id, publish_platform_id: data.publish_platform_id,
+      tags: parseJson(data.tags, []), registration_deadline: data.registration_deadline,
+      bid_deadline: data.bid_deadline, budget_amount: data.budget_amount || 0,
+      control_price_type: data.control_price_type || '金额',
+      control_price_upper: data.control_price_upper, control_price_lower: data.control_price_lower,
+      is_prequalification: data.is_prequalification || false,
+      bid_specialist_id: data.bid_specialist_id, bidding_notes: data.bidding_notes || '',
+      is_registered: data.is_registered || (statusGte(data.status, '准备投标') && !!data.registration_deadline),
+    }
+    bidForm.value = {
+      partner_ids: parseJson(data.partner_ids, []), bid_method: data.bid_method || '独立',
+      is_consortium_lead: data.is_consortium_lead !== false,
+      has_deposit: data.has_deposit || false,
+      deposit_status: data.deposit_status || '无', deposit_amount: data.deposit_amount || 0,
+      deposit_date: data.deposit_date, deposit_return_date: data.deposit_return_date,
+      our_price: data.our_price || 0, bid_notes: data.bid_notes || '',
+    }
+    _updatingFromWinning = true
+    const rawCompetitors = parseJson(data.competitors, [])
+    resultForm.value = {
+      competitors: rawCompetitors.map(c => ({
+        org_ids: c.org_ids || (c.org_id ? [c.org_id] : []),
+        price: c.price || 0, score: c.score || 0,
+        is_shortlisted: c.is_shortlisted || false, is_winning: c.is_winning || false,
+      })),
+      scoring_details: parseJson(data.scoring_details, []),
+      result_deposit_status: data.result_deposit_status,
+      is_won: data.is_won || false, is_bid_failed: data.is_bid_failed || false,
+      winning_org_id: data.winning_org_id,
+      winning_org_ids: parseJson(data.winning_org_ids, []),
+      winning_price: data.winning_price, winning_amount: data.winning_amount,
+      lost_analysis: data.lost_analysis || '', contract_number: data.contract_number || '',
+      contract_status: data.contract_status || '无', contract_amount: data.contract_amount || 0,
+      result_notes: data.result_notes || '',
+    }
+    await nextTick()
+    _updatingFromWinning = false
+    ensureOurCompanyInCompetitors()
+  } catch { /* ignore */ }
+}
+
+async function handleLotTabClick(pane) {
+  const targetName = pane.paneName || pane
+  if (targetName === '__add__') {
+    // 预填父项目基本信息
+    newLotForm.value = {
+      project_name: '',
+      bidding_unit_id: projectForm.value.bidding_unit_id,
+      region: [...(projectForm.value.region || [])],
+      manager_ids: [...(projectForm.value.manager_ids || [])],
+      description: '',
+    }
+    showCreateLotDialog.value = true
+    // 恢复之前的 tab
+    await nextTick()
+    return
+  }
+  // 切换前保存当前标段
+  if (activeLotTab.value && activeLotTab.value !== '__summary__' && activeLotTab.value !== '__add__') {
+    await saveCurrentLot()
+  }
+  if (targetName === '__summary__') {
+    activeLotTab.value = '__summary__'
+    return
+  }
+  activeLotTab.value = targetName
+  await switchToLot(parseInt(targetName))
+}
+
+async function handleCreateLot() {
+  creatingLot.value = true
+  try {
+    const lotData = {
+      ...newLotForm.value,
+      bidding_type: projectForm.value.bidding_type,
+      parent_project_id: project.value.id,
+      is_multi_lot: false,
+      region: JSON.stringify(newLotForm.value.region),
+      manager_ids: newLotForm.value.manager_ids,
+    }
+    const created = await createProject(lotData)
+    ElMessage.success('标段创建成功')
+    showCreateLotDialog.value = false
+    newLotForm.value = { project_name: '', bidding_unit_id: null, region: [], manager_ids: [] }
+    await loadLots()
+    if (lotList.value.length) {
+      activeLotTab.value = String(lotList.value[lotList.value.length - 1].id)
+      await switchToLot(lotList.value[lotList.value.length - 1].id)
+    }
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '创建失败')
+  } finally {
+    creatingLot.value = false
+  }
+}
+
 const isNew = computed(() => route.params.id === 'new')
 
 // ---- Status computed ----
@@ -452,6 +674,8 @@ const isNotRegistered = computed(() => project.value.status === '未报名')
 const isRegistered = computed(() => project.value.status === '已报名')
 const isPreparing = computed(() => project.value.status === '准备投标')
 const isAbandoned = computed(() => project.value.status === '已放弃')
+const isMultiLotParent = computed(() => project.value.is_multi_lot === true)
+const isMultiLotChild = computed(() => !isNew.value && projectForm.value.parent_project_id != null && project.value.parent_is_multi_lot === true && projectForm.value.bidding_type !== '入围分项')
 const canAbandon = computed(() => ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标'].includes(project.value.status))
 const showBidding = computed(() => !isNew.value && statusGte(project.value.status, '已发公告'))
 const showBid = computed(() => !isNew.value && statusGte(project.value.status, '准备投标'))
@@ -490,7 +714,7 @@ const OUR_COMPANY_NAME = '浙江意诚检测有限公司'
 
 // ---- Forms ----
 const projectFormRef = ref(null)
-const defaultProjectForm = { bidding_type: '', project_name: '', bidding_unit_id: null, region: [], manager_ids: [], description: '', parent_project_id: null }
+const defaultProjectForm = { bidding_type: '', project_name: '', bidding_unit_id: null, region: [], manager_ids: [], description: '', parent_project_id: null, is_multi_lot: false }
 const projectForm = ref({ ...defaultProjectForm })
 const projectRules = {
   bidding_type: [{ required: true, message: '请选择招标类型', trigger: 'change' }],
@@ -810,6 +1034,20 @@ function parseJson(val, fallback = []) {
   return fallback
 }
 
+function formatRegionDisplay(region) {
+  if (!region || !region.length) return ''
+  return Array.isArray(region) ? region.join(' ') : region
+}
+
+function getManagerName(mid) {
+  // managers are not stored in a local map; use the project's enriched data
+  const idx = (projectForm.value.manager_ids || []).indexOf(mid)
+  if (idx >= 0 && project.value.manager_names && project.value.manager_names[idx]) {
+    return project.value.manager_names[idx]
+  }
+  return ''
+}
+
 // ---- Load ----
 async function loadProject() {
   if (isNew.value) return
@@ -827,6 +1065,7 @@ async function loadProject() {
       bidding_unit_id: data.bidding_unit_id, region, manager_ids: managerIds,
       description: data.description || '',
       parent_project_id: data.parent_project_id || null,
+      is_multi_lot: data.is_multi_lot || false,
     }
     parentProjectName.value = data.parent_project_name || ''
     if (data.parent_project_id) {
@@ -841,8 +1080,8 @@ async function loadProject() {
       bid_deadline: data.bid_deadline, budget_amount: data.budget_amount || 0,
       control_price_type: data.control_price_type || '金额',
       control_price_upper: data.control_price_upper, control_price_lower: data.control_price_lower,
-      is_prequalification: data.is_prequalification || false, bid_specialist_id: data.bid_specialist_id,
-      bidding_notes: data.bidding_notes || '',
+      is_prequalification: data.is_prequalification || false,
+      bid_specialist_id: data.bid_specialist_id, bidding_notes: data.bidding_notes || '',
       is_registered: data.is_registered || (statusGte(data.status, '准备投标') && !!data.registration_deadline),
     }
 
@@ -886,6 +1125,9 @@ async function loadProject() {
     router.push('/projects')
   }
   ensureOurCompanyInCompetitors()
+  if (isMultiLotParent.value) {
+    await loadLots()
+  }
 }
 
 async function loadUsers() {
@@ -1020,6 +1262,9 @@ async function handleAbandon() {
 onMounted(async () => {
   await Promise.all([loadOrgNames(), loadUsers()])
   await loadProject()
+  if (isMultiLotParent.value) {
+    await loadLots()
+  }
 })
 </script>
 

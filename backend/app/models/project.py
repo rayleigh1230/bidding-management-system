@@ -95,6 +95,7 @@ class ProjectInfo(Base):
     control_price_upper: Mapped[float] = mapped_column(Numeric(15, 2), nullable=True)
     control_price_lower: Mapped[float] = mapped_column(Numeric(15, 2), nullable=True)
     is_prequalification: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_multi_lot: Mapped[bool] = mapped_column(Boolean, default=False)
     bid_specialist_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     bid_documents: Mapped[str] = mapped_column(JSON, default=[])
     bidding_notes: Mapped[str] = mapped_column(Text, default="")
@@ -136,4 +137,5 @@ class ProjectInfo(Base):
         Index('ix_project_updated_at', 'updated_at'),
         Index('ix_project_has_deposit', 'has_deposit'),
         Index('ix_project_parent_project_id', 'parent_project_id'),
+        Index('ix_project_is_multi_lot', 'is_multi_lot'),
     )
