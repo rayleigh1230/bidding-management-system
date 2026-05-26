@@ -609,7 +609,7 @@ async function handleLotTabClick(pane) {
   if (targetName === '__add__') {
     // 预填父项目基本信息
     newLotForm.value = {
-      project_name: '',
+      project_name: projectForm.value.project_name || '',
       bidding_unit_id: projectForm.value.bidding_unit_id,
       region: [...(projectForm.value.region || [])],
       manager_ids: [...(projectForm.value.manager_ids || [])],
@@ -660,6 +660,13 @@ async function handleCreateLot() {
 }
 
 const isNew = computed(() => route.params.id === 'new')
+
+// 当前实际操作的项目 ID：在标段 tab 时为标段 ID，否则为路由 ID
+const currentProjectId = computed(() => {
+  const lotId = parseInt(activeLotTab.value)
+  if (!isNaN(lotId)) return lotId
+  return parseInt(route.params.id)
+})
 
 // ---- Status computed ----
 const statusOrder = ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标', '已中标', '未中标', '已流标', '已放弃']
@@ -906,7 +913,7 @@ async function doSyncCompetitors() {
     return
   }
   try {
-    const updated = await syncCompetitors(route.params.id)
+    const updated = await syncCompetitors(currentProjectId.value)
     // 更新本地的 competitors
     const rawComps = updated.competitors || []
     resultForm.value.competitors = rawComps.map(c => ({
@@ -1188,9 +1195,13 @@ async function handleSave() {
       await router.replace(`/projects/${created.id}`)
       await loadProject()
     } else {
-      await updateProject(route.params.id, data)
+      await updateProject(currentProjectId.value, data)
       ElMessage.success('保存成功')
-      await loadProject()
+      if (activeLotTab.value !== '__summary__' && !isNaN(parseInt(activeLotTab.value))) {
+        await switchToLot(parseInt(activeLotTab.value))
+      } else {
+        await loadProject()
+      }
     }
   } catch (err) {
     ElMessage.error(err.response?.data?.detail || '操作失败')
@@ -1205,8 +1216,8 @@ async function handlePublish() {
     await ElMessageBox.confirm('确认已发布招标公告？将自动保存当前信息。', '确认')
     saving.value = true
     const data = collectSaveData()
-    await updateProject(route.params.id, data)
-    await publishProject(route.params.id)
+    await updateProject(currentProjectId.value, data)
+    await publishProject(currentProjectId.value)
     ElMessage.success('发布成功')
     await loadProject()
   } catch (err) {
@@ -1221,8 +1232,8 @@ async function handlePrepare() {
     await ElMessageBox.confirm('确认准备投标？将自动保存当前信息。', '确认')
     saving.value = true
     const data = collectSaveData()
-    await updateProject(route.params.id, data)
-    await prepareProject(route.params.id)
+    await updateProject(currentProjectId.value, data)
+    await prepareProject(currentProjectId.value)
     ElMessage.success('进入准备投标')
     await loadProject()
   } catch (err) {
@@ -1237,8 +1248,8 @@ async function handleSubmit() {
     await ElMessageBox.confirm('确认提交投标？将自动保存当前信息。', '确认')
     saving.value = true
     const data = collectSaveData()
-    await updateProject(route.params.id, data)
-    await submitProject(route.params.id)
+    await updateProject(currentProjectId.value, data)
+    await submitProject(currentProjectId.value)
     ElMessage.success('已提交投标')
     await loadProject()
   } catch (err) {
@@ -1250,7 +1261,7 @@ async function handleSubmit() {
 
 async function handleAbandon() {
   try {
-    await abandonProject(route.params.id, abandonReason.value)
+    await abandonProject(currentProjectId.value, abandonReason.value)
     ElMessage.success('已放弃')
     showAbandonDialog.value = false
     await loadProject()

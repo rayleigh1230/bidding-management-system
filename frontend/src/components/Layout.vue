@@ -1,59 +1,62 @@
 <template>
   <el-container style="height: 100vh">
-    <el-aside width="220px" style="background-color: #304156">
-      <div style="height: 60px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; font-weight: bold">
+    <el-aside width="220px" style="background-color: #304156; display: flex; flex-direction: column">
+      <div style="height: 60px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; font-weight: bold; flex-shrink: 0">
         招标管理系统
       </div>
-      <el-menu
-        :default-active="activeMenu"
-        background-color="#304156"
-        text-color="#bfcbd9"
-        active-text-color="#409eff"
-        router
-      >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataBoard /></el-icon>
-          <span>工作台</span>
-        </el-menu-item>
-
-        <el-menu-item index="/projects">
-          <el-icon><Document /></el-icon>
-          <span>项目管理</span>
-        </el-menu-item>
-
-        <el-menu-item index="/statistics">
-          <el-icon><TrendCharts /></el-icon>
-          <span>数据分析</span>
-        </el-menu-item>
-
-        <el-sub-menu index="admin">
-          <template #title>
-            <el-icon><Setting /></el-icon>
-            <span>基础数据</span>
-          </template>
-          <el-menu-item index="/organizations">
-            <el-icon><OfficeBuilding /></el-icon>
-            <span>单位库管理</span>
+      <div style="flex: 1; overflow-y: auto">
+        <el-menu
+          :default-active="activeMenu"
+          background-color="#304156"
+          text-color="#bfcbd9"
+          active-text-color="#409eff"
+          router
+        >
+          <el-menu-item index="/dashboard">
+            <el-icon><DataBoard /></el-icon>
+            <span>工作台</span>
           </el-menu-item>
-          <el-menu-item index="/platforms">
-            <el-icon><Monitor /></el-icon>
-            <span>平台管理</span>
-          </el-menu-item>
-          <el-menu-item index="/managers">
-            <el-icon><User /></el-icon>
-            <span>负责人管理</span>
-          </el-menu-item>
-          <el-menu-item index="/users">
-            <el-icon><Avatar /></el-icon>
-            <span>用户管理</span>
-          </el-menu-item>
-        </el-sub-menu>
 
-        <el-menu-item index="/logs">
-          <el-icon><Notebook /></el-icon>
-          <span>操作日志</span>
-        </el-menu-item>
-      </el-menu>
+          <el-menu-item index="/projects">
+            <el-icon><Document /></el-icon>
+            <span>项目管理</span>
+          </el-menu-item>
+
+          <el-menu-item index="/statistics">
+            <el-icon><TrendCharts /></el-icon>
+            <span>数据分析</span>
+          </el-menu-item>
+
+          <el-sub-menu index="admin">
+            <template #title>
+              <el-icon><Setting /></el-icon>
+              <span>基础数据</span>
+            </template>
+            <el-menu-item index="/organizations">
+              <el-icon><OfficeBuilding /></el-icon>
+              <span>单位库管理</span>
+            </el-menu-item>
+            <el-menu-item index="/platforms">
+              <el-icon><Monitor /></el-icon>
+              <span>平台管理</span>
+            </el-menu-item>
+            <el-menu-item index="/managers">
+              <el-icon><User /></el-icon>
+              <span>负责人管理</span>
+            </el-menu-item>
+            <el-menu-item index="/users">
+              <el-icon><Avatar /></el-icon>
+              <span>用户管理</span>
+            </el-menu-item>
+          </el-sub-menu>
+
+          <el-menu-item index="/logs">
+            <el-icon><Notebook /></el-icon>
+            <span>操作日志</span>
+          </el-menu-item>
+        </el-menu>
+      </div>
+      <SidebarHelp />
     </el-aside>
 
     <el-container>
@@ -78,6 +81,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import SidebarHelp from './SidebarHelp.vue'
 
 const route = useRoute()
 const router = useRouter()

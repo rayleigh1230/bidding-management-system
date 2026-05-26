@@ -76,7 +76,11 @@ export const regionData = [
       { value: '温州市', label: '温州市', children: [
         { value: '鹿城区', label: '鹿城区' }, { value: '龙湾区', label: '龙湾区' },
         { value: '瓯海区', label: '瓯海区' }, { value: '洞头区', label: '洞头区' },
+        { value: '永嘉县', label: '永嘉县' }, { value: '平阳县', label: '平阳县' },
+        { value: '苍南县', label: '苍南县' }, { value: '文成县', label: '文成县' },
+        { value: '泰顺县', label: '泰顺县' },
         { value: '瑞安市', label: '瑞安市' }, { value: '乐清市', label: '乐清市' },
+        { value: '龙港市', label: '龙港市' },
       ] },
       { value: '嘉兴市', label: '嘉兴市', children: [
         { value: '南湖区', label: '南湖区' }, { value: '秀洲区', label: '秀洲区' },
@@ -89,24 +93,35 @@ export const regionData = [
       ] },
       { value: '绍兴市', label: '绍兴市', children: [
         { value: '越城区', label: '越城区' }, { value: '柯桥区', label: '柯桥区' },
-        { value: '上虞区', label: '上虞区' }, { value: '诸暨市', label: '诸暨市' }, { value: '嵊州市', label: '嵊州市' },
+        { value: '上虞区', label: '上虞区' }, { value: '新昌县', label: '新昌县' },
+        { value: '诸暨市', label: '诸暨市' }, { value: '嵊州市', label: '嵊州市' },
       ] },
       { value: '金华市', label: '金华市', children: [
         { value: '婺城区', label: '婺城区' }, { value: '金东区', label: '金东区' },
-        { value: '义乌市', label: '义乌市' }, { value: '东阳市', label: '东阳市' }, { value: '永康市', label: '永康市' },
+        { value: '武义县', label: '武义县' }, { value: '浦江县', label: '浦江县' }, { value: '磐安县', label: '磐安县' },
+        { value: '兰溪市', label: '兰溪市' }, { value: '义乌市', label: '义乌市' }, { value: '东阳市', label: '东阳市' }, { value: '永康市', label: '永康市' },
       ] },
       { value: '衢州市', label: '衢州市', children: [
-        { value: '柯城区', label: '柯城区' }, { value: '衢江区', label: '衢江区' }, { value: '江山市', label: '江山市' },
+        { value: '柯城区', label: '柯城区' }, { value: '衢江区', label: '衢江区' },
+        { value: '常山县', label: '常山县' }, { value: '开化县', label: '开化县' }, { value: '龙游县', label: '龙游县' },
+        { value: '江山市', label: '江山市' },
       ] },
       { value: '舟山市', label: '舟山市', children: [
         { value: '定海区', label: '定海区' }, { value: '普陀区', label: '普陀区' },
+        { value: '岱山县', label: '岱山县' }, { value: '嵊泗县', label: '嵊泗县' },
       ] },
       { value: '台州市', label: '台州市', children: [
         { value: '椒江区', label: '椒江区' }, { value: '黄岩区', label: '黄岩区' }, { value: '路桥区', label: '路桥区' },
-        { value: '温岭市', label: '温岭市' }, { value: '临海市', label: '临海市' },
+        { value: '三门县', label: '三门县' }, { value: '天台县', label: '天台县' }, { value: '仙居县', label: '仙居县' },
+        { value: '温岭市', label: '温岭市' }, { value: '临海市', label: '临海市' }, { value: '玉环市', label: '玉环市' },
       ] },
       { value: '丽水市', label: '丽水市', children: [
-        { value: '莲都区', label: '莲都区' }, { value: '龙泉市', label: '龙泉市' },
+        { value: '莲都区', label: '莲都区' },
+        { value: '青田县', label: '青田县' }, { value: '缙云县', label: '缙云县' },
+        { value: '遂昌县', label: '遂昌县' }, { value: '松阳县', label: '松阳县' },
+        { value: '云和县', label: '云和县' }, { value: '庆元县', label: '庆元县' },
+        { value: '景宁畲族自治县', label: '景宁畲族自治县' },
+        { value: '龙泉市', label: '龙泉市' },
       ] },
     ],
   },
