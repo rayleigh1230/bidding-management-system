@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, inspect as sa_inspect
+from datetime import datetime
 
 from .core.database import engine, Base
 
@@ -20,7 +21,7 @@ def on_startup():
     # Import all models so Base knows about them
     from .models import (  # noqa: F401
         user, organization, platform, manager,
-        project, operation_log,
+        project, operation_log, scrape,
     )
     Base.metadata.create_all(bind=engine)
 
@@ -78,6 +79,44 @@ def on_startup():
             conn.execute(text("ALTER TABLE project_infos ADD COLUMN result_documents JSON DEFAULT '[]'"))
             conn.commit()
         print("Migration: added result_documents column to project_infos")
+
+    # Auto-migrate: add external_no/source/source_url columns to project_infos
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'external_no' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN external_no VARCHAR(100)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_project_external_no ON project_infos(external_no)"))
+            conn.commit()
+        print("Migration: added external_no column to project_infos")
+    if 'source' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN source VARCHAR(50) DEFAULT 'manual'"))
+            conn.commit()
+        print("Migration: added source column to project_infos")
+    if 'source_url' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN source_url VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+        print("Migration: added source_url column to project_infos")
+
+    # Cleanup orphan scrape runs from previous unclean shutdown
+    from sqlalchemy.orm import Session as _Session
+    from .models.scrape import ScrapeRun as _ScrapeRun
+    _cleanup_db = _Session(bind=engine)
+    try:
+        _orphans = _cleanup_db.query(_ScrapeRun).filter(
+            _ScrapeRun.status == "running",
+            _ScrapeRun.finished_at.is_(None),
+        ).all()
+        for _orphan in _orphans:
+            _orphan.status = "failed"
+            _orphan.error_summary = {"system": "服务重启中断"}
+            _orphan.finished_at = datetime.now()
+        if _orphans:
+            _cleanup_db.commit()
+            print(f"Cleanup: marked {len(_orphans)} orphan scrape run(s) as failed")
+    finally:
+        _cleanup_db.close()
 
     # Create default admin user
     from sqlalchemy.orm import Session
