@@ -1,5 +1,5 @@
 # Backend
-backend/data/app.db
+backend/data/
 backend/uploads/
 __pycache__/
 **/__pycache__/
@@ -22,3 +22,7 @@ frontend/dist/
 nul
 projects_dump.json
 verify.json
+
+# Local DB backups, one-off scripts, tooling state
+backend/migrate_db.py
+.superpowers/
