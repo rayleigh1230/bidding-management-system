@@ -10,20 +10,17 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..core.config import settings, BASE_DIR
 from ..core.database import get_db
 from ..core.security import get_current_user
 from ..models.organization import Organization
-from ..models.platform import Platform
 from ..models.project import ProjectInfo
-from ..schemas.dict import OrganizationCreate, PlatformCreate
 from ..services.document_parser import DocumentParseError, get_parser
 from ..services.logger import log_operation
-from .organizations import create_organization as _create_org
-from .platforms import create_platform as _create_platform
+from ..services.org_matcher import match_or_create_org as _match_or_create_org
+from ..services.org_matcher import match_or_create_platform as _match_or_create_platform
 
 router = APIRouter(prefix="/api/documents", tags=["文档解析"])
 
@@ -60,58 +57,6 @@ def _save_upload(file: UploadFile, project_id: int) -> dict:
         "size": len(contents),
         "uploaded_at": datetime.now().isoformat(timespec="seconds"),
     }
-
-
-def _match_or_create_org(
-    name: str, db: Session, current_user
-) -> tuple[int | None, str | None]:
-    """返回 (org_id, matched_name)。无输入返回 (None, None)。"""
-    name = (name or "").strip()
-    if not name:
-        return None, None
-    existing = (
-        db.query(Organization)
-        .filter(
-            or_(
-                Organization.name == name,
-                Organization.name.contains(name),
-                Organization.short_name.contains(name),
-            )
-        )
-        .first()
-    )
-    if existing:
-        return existing.id, existing.name
-    # 先查重避免触发 create_organization 内置的 400
-    dup = db.query(Organization).filter(Organization.name == name).first()
-    if dup:
-        return dup.id, dup.name
-    new_org = _create_org(
-        OrganizationCreate(name=name, org_type="external"),
-        db=db,
-        current_user=current_user,
-    )
-    return new_org.id, new_org.name
-
-
-def _match_or_create_platform(
-    name: str, db: Session, current_user
-) -> tuple[int | None, str | None]:
-    name = (name or "").strip()
-    if not name:
-        return None, None
-    existing = (
-        db.query(Platform)
-        .filter(or_(Platform.name == name, Platform.name.contains(name)))
-        .first()
-    )
-    if existing:
-        return existing.id, existing.name
-    dup = db.query(Platform).filter(Platform.name == name).first()
-    if dup:
-        return dup.id, dup.name
-    new_pf = _create_platform(PlatformCreate(name=name), db=db, current_user=current_user)
-    return new_pf.id, new_pf.name
 
 
 def _to_float(value):
