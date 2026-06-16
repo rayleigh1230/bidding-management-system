@@ -54,6 +54,14 @@
           </div>
         </el-popover>
         <el-button type="primary" @click="$router.push('/projects/new')"><el-icon><Plus /></el-icon> 新增项目</el-button>
+        <el-button
+          v-if="userStore.user?.role === 'admin'"
+          type="success"
+          :loading="scrapeState.running"
+          @click="handleScrape"
+        >
+          <el-icon><Download /></el-icon> 抓取招标信息
+        </el-button>
       </div>
     </div>
 
@@ -260,18 +268,45 @@
         @current-change="loadData"
       />
     </div>
+
+    <!-- 抓取进度 -->
+    <el-dialog v-model="scrapeState.showProgress" title="抓取进度" width="520px" :close-on-click-modal="false" :close-on-press-escape="false">
+      <div v-if="scrapeState.running">
+        <el-progress :percentage="scrapeState.percentage" status="warning" />
+        <p style="margin-top: 12px; color: #666">
+          已入库: {{ scrapeState.created }} | 重复跳过: {{ scrapeState.skipped }} | 失败: {{ scrapeState.failed }}
+        </p>
+        <p style="color: #999; font-size: 13px">正在抓取，请勿关闭页面...</p>
+      </div>
+      <div v-else>
+        <el-result
+          :icon="scrapeResultIcon"
+          :title="scrapeResultTitle"
+          :sub-title="scrapeResultSub"
+        >
+          <template #extra>
+            <el-button @click="scrapeState.showProgress = false">关闭</el-button>
+            <el-button type="primary" @click="$router.push('/scrape/history')">查看抓取记录</el-button>
+          </template>
+        </el-result>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Plus, Setting, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Plus, Setting, ArrowDown, ArrowUp, Download } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, getProjectLots } from '../../api/project'
+import { triggerScrape, getScrapeStatus } from '../../api/scrape'
+import { useUserStore } from '../../stores/user'
 import RegionCascader from '../../components/RegionCascader.vue'
 import ManagerSelector from '../../components/ManagerSelector.vue'
 import PlatformSelector from '../../components/PlatformSelector.vue'
 import OrgSelector from '../../components/OrgSelector.vue'
+
+const userStore = useUserStore()
 
 const STORAGE_PREFIX = 'project_list_columns'
 
@@ -539,6 +574,116 @@ async function handleDelete(id) {
     ElMessage.error(err.response?.data?.detail || '删除失败')
   }
 }
+
+// ---- 抓取功能 ----
+const scrapeState = reactive({
+  running: false,
+  showProgress: false,
+  runId: null,
+  percentage: 0,
+  created: 0,
+  skipped: 0,
+  failed: 0,
+  status: '',
+  errorSummary: {},
+  pollTimer: null,
+})
+
+const scrapeResultIcon = computed(() => {
+  if (scrapeState.status === 'success') return 'success'
+  if (scrapeState.status === 'partial') return 'warning'
+  return 'error'
+})
+
+const scrapeResultTitle = computed(() => {
+  const map = { success: '抓取完成', partial: '部分成功', failed: '抓取失败' }
+  return map[scrapeState.status] || '完成'
+})
+
+const scrapeResultSub = computed(() => {
+  const errs = scrapeState.errorSummary || {}
+  const failedSites = Object.keys(errs).filter(k => k !== 'system')
+  const parts = [
+    `入库 ${scrapeState.created}，跳过 ${scrapeState.skipped}，失败 ${scrapeState.failed}`,
+  ]
+  if (failedSites.length) {
+    parts.push(`失败站点: ${failedSites.join(', ')}`)
+  }
+  return parts.join('；')
+})
+
+async function handleScrape() {
+  try {
+    await ElMessageBox.confirm(
+      '将抓取 4 个站点今日新增的招标公告，预计 1-2 分钟。\n\n抓取到的项目会自动入库（初始状态：跟进中），可在列表中查看。',
+      '确认抓取',
+      { confirmButtonText: '开始抓取', cancelButtonText: '取消', type: 'info' }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const resp = await triggerScrape()
+    scrapeState.running = true
+    scrapeState.showProgress = true
+    scrapeState.runId = resp.run_id
+    scrapeState.percentage = 0
+    scrapeState.created = 0
+    scrapeState.skipped = 0
+    scrapeState.failed = 0
+    scrapeState.status = 'running'
+    scrapeState.errorSummary = {}
+    localStorage.setItem('lastScrapeRunId', resp.run_id)
+    pollScrapeStatus()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '触发抓取失败')
+  }
+}
+
+function pollScrapeStatus() {
+  if (scrapeState.pollTimer) clearInterval(scrapeState.pollTimer)
+  scrapeState.pollTimer = setInterval(async () => {
+    if (!scrapeState.runId) return
+    try {
+      const data = await getScrapeStatus(scrapeState.runId)
+      scrapeState.created = data.created_count
+      scrapeState.skipped = data.skipped_count
+      scrapeState.failed = data.failed_count
+      scrapeState.errorSummary = data.error_summary || {}
+      const sites = data.sites_summary || {}
+      const errors = data.error_summary || {}
+      const doneSites = Object.keys(sites).length + Object.keys(errors).length
+      scrapeState.percentage = Math.min(95, Math.round((doneSites / 4) * 100))
+
+      if (data.status !== 'running') {
+        clearInterval(scrapeState.pollTimer)
+        scrapeState.pollTimer = null
+        scrapeState.running = false
+        scrapeState.status = data.status
+        scrapeState.percentage = 100
+        localStorage.removeItem('lastScrapeRunId')
+        ElMessage.success(`抓取完成：入库 ${data.created_count} 条`)
+        loadData()
+      }
+    } catch (err) {
+      console.error('轮询失败', err)
+    }
+  }, 2000)
+}
+
+// 恢复未完成的轮询
+const _lastRunId = localStorage.getItem('lastScrapeRunId')
+if (_lastRunId) {
+  scrapeState.runId = parseInt(_lastRunId)
+  scrapeState.showProgress = true
+  scrapeState.running = true
+  pollScrapeStatus()
+}
+
+onUnmounted(() => {
+  if (scrapeState.pollTimer) clearInterval(scrapeState.pollTimer)
+})
 
 onMounted(() => {
   // 恢复高级搜索展开状态
