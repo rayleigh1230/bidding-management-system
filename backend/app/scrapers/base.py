@@ -118,7 +118,10 @@ class BaseScraper(ABC):
                 last_err = e
                 if attempt < self.MAX_RETRIES - 1:
                     time.sleep(self.RETRY_DELAY * (attempt + 1))
-        raise SiteFetchError(f"{self.name} 连续 {self.MAX_RETRIES} 次失败: {last_err}")
+        raise SiteFetchError(
+            f"{self.name} 连续 {self.MAX_RETRIES} 次失败: "
+            f"{type(last_err).__name__}: {last_err}"
+        )
 
 
 def parse_date_safe(s: str, formats: list[str] = None) -> Optional[date]:
