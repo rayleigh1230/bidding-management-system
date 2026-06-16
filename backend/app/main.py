@@ -176,6 +176,7 @@ from .api.platforms import router as platforms_router
 from .api.managers import router as managers_router
 from .api.projects import router as projects_router
 from .api.documents import router as documents_router
+from .api.scrape import router as scrape_router
 
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -186,3 +187,4 @@ app.include_router(platforms_router)
 app.include_router(managers_router)
 app.include_router(projects_router)
 app.include_router(documents_router)
+app.include_router(scrape_router)
