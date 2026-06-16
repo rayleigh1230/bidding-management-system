@@ -86,6 +86,9 @@ class ProjectResponse(BaseModel):
     description: str
     abandon_reason: str
     parent_project_id: Optional[int] = None
+    external_no: Optional[str] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime
