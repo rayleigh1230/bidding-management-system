@@ -75,15 +75,20 @@ class JhygcgScraper(BaseScraper):
         title = (raw.get("title") or raw.get("bulletinTitle") or "").strip()
         if not title:
             return None
+        # API 混有采购结果(classId=24)和成交候选人(classId=22)，只保留采购公告(classId=21)
+        class_id = str(raw.get("classId", ""))
+        if class_id and class_id != "21":
+            return None
         if not match_keywords(title):
             return None
         if is_result_announcement(title):
             return None
 
         publish_date = parse_date_safe(raw.get("publishDate"))
-        external_no = raw.get("prjNo") or raw.get("articleId") or None
+        article_id = raw.get("articleId", "")
+        external_no = raw.get("prjNo") or article_id or None
         region = '["浙江省","金华市"]'
-        source_url = f"https://www.jhygcg.com/home/bulletin/{raw.get('articleId','')}" if raw.get("articleId") else None
+        source_url = f"https://www.jhygcg.com/home/detail?bulletinId={article_id}" if article_id else None
 
         return ScrapeItem(
             project_name=title,
