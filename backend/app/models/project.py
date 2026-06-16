@@ -84,6 +84,11 @@ class ProjectInfo(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    # ---- 抓取来源 ----
+    external_no: Mapped[str] = mapped_column(String(100), nullable=True)
+    source: Mapped[str] = mapped_column(String(50), default="manual")
+    source_url: Mapped[str] = mapped_column(String(500), default="")
+
     # ---- Section 2: 招标信息 (status >= 已发公告) ----
     agency_id: Mapped[int] = mapped_column(Integer, ForeignKey("organizations.id"), nullable=True)
     publish_platform_id: Mapped[int] = mapped_column(Integer, ForeignKey("platforms.id"), nullable=True)
@@ -139,4 +144,5 @@ class ProjectInfo(Base):
         Index('ix_project_has_deposit', 'has_deposit'),
         Index('ix_project_parent_project_id', 'parent_project_id'),
         Index('ix_project_is_multi_lot', 'is_multi_lot'),
+        Index('ix_project_external_no', 'external_no'),
     )
