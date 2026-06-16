@@ -115,6 +115,11 @@
           <el-form-item label="项目描述">
             <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!basicInfoEditable" />
           </el-form-item>
+          <el-form-item v-if="projectForm.source_url" label="公告链接">
+            <el-link type="primary" :href="projectForm.source_url" target="_blank" :underline="false">
+              <el-icon><Link /></el-icon> 点击查看原文公告
+            </el-link>
+          </el-form-item>
         </el-form>
       </el-card>
 
@@ -556,7 +561,7 @@ import { useUserStore } from '../../stores/user'
 
 const userStore = useUserStore()
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Upload, Document as DocumentIcon } from '@element-plus/icons-vue'
+import { Delete, Upload, Document as DocumentIcon, Link } from '@element-plus/icons-vue'
 import {
   getProject, createProject, updateProject,
   publishProject, prepareProject, submitProject, abandonProject,
@@ -1167,6 +1172,7 @@ async function loadProject() {
       description: data.description || '',
       parent_project_id: data.parent_project_id || null,
       is_multi_lot: data.is_multi_lot || false,
+      source_url: data.source_url || '',
     }
     parentProjectName.value = data.parent_project_name || ''
     if (data.parent_project_id) {
