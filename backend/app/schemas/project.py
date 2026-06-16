@@ -39,8 +39,9 @@ class ProjectUpdate(BaseModel):
     is_prequalification: Optional[bool] = None
     is_multi_lot: Optional[bool] = None
     bid_specialist_id: Optional[int] = None
-    bid_documents: Optional[list[str]] = None
+    bid_documents: Optional[list[Any]] = None
     bidding_notes: Optional[str] = None
+    result_documents: Optional[list[Any]] = None
     # Section 3: 投标信息
     partner_ids: Optional[list[int]] = None
     bid_method: Optional[str] = None
@@ -102,6 +103,7 @@ class ProjectResponse(BaseModel):
     is_multi_lot: bool = False
     bid_specialist_id: Optional[int] = None
     bid_documents: Any = []
+    result_documents: Any = []
     bidding_notes: str = ""
     # Section 3
     partner_ids: Any = []

@@ -43,3 +43,35 @@ export function syncCompetitors(id) {
 export function getProjectLots(projectId) {
   return request.get(`/projects/${projectId}/lots`)
 }
+
+export function parseBidDocument(projectId, formData) {
+  return request.post('/documents/parse', formData, {
+    params: { project_id: projectId },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 200000,
+  })
+}
+
+export function getBidDocuments(projectId) {
+  return request.get(`/documents/${projectId}/files`)
+}
+
+export function deleteBidDocument(projectId, index) {
+  return request.delete(`/documents/${projectId}/files/${index}`)
+}
+
+export function parseResultDocument(projectId, formData) {
+  return request.post('/documents/parse', formData, {
+    params: { project_id: projectId, parse_type: 'result' },
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 200000,
+  })
+}
+
+export function getResultDocuments(projectId) {
+  return request.get(`/documents/${projectId}/result-files`)
+}
+
+export function deleteResultDocument(projectId, index) {
+  return request.delete(`/documents/${projectId}/result-files/${index}`)
+}

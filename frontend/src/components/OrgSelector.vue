@@ -146,5 +146,16 @@ watch(() => props.modelValue, (val) => {
       }).catch(() => {})
     }
   }
+  // For single mode, reload options if the selected id is missing (e.g. auto-created externally)
+  if (!props.multiple && val && loaded) {
+    const exists = options.value.some(o => o.id === val)
+    if (!exists) {
+      const params = { page_size: 500 }
+      if (props.excludeOurs) params.exclude_type = 'ours'
+      getOrganizations(params).then(res => {
+        options.value = res.items || []
+      }).catch(() => {})
+    }
+  }
 }, { immediate: true })
 </script>

@@ -77,7 +77,7 @@
             </el-col>
             <el-col :span="12">
               <el-form-item label="所属地区">
-                <RegionCascader v-model="projectForm.region" :disabled="!isNew && !isFollowing" style="width: 100%" />
+                <RegionCascader v-model="projectForm.region" :disabled="!basicInfoEditable" style="width: 100%" />
               </el-form-item>
             </el-col>
           </el-row>
@@ -101,19 +101,19 @@
             </el-select>
           </el-form-item>
           <el-form-item label="项目名称" prop="project_name">
-            <el-input v-model="projectForm.project_name" :disabled="!isNew && !isFollowing" />
+            <el-input v-model="projectForm.project_name" :disabled="!basicInfoEditable" />
           </el-form-item>
           <el-form-item label="招标单位">
-            <OrgSelector v-model="projectForm.bidding_unit_id" :disabled="!isNew && !isFollowing" :exclude-ours style="width: 100%" />
+            <OrgSelector v-model="projectForm.bidding_unit_id" :disabled="!basicInfoEditable" :exclude-ours style="width: 100%" />
           </el-form-item>
           <el-form-item label="项目负责人">
-            <ManagerSelector v-model="projectForm.manager_ids" :multiple="true" :disabled="!isNew && !isFollowing" style="width: 100%" />
+            <ManagerSelector v-model="projectForm.manager_ids" :multiple="true" :disabled="!basicInfoEditable" style="width: 100%" />
           </el-form-item>
           <el-form-item v-if="isNew || isFollowing" label="多标段项目">
             <el-switch v-model="projectForm.is_multi_lot" active-text="是（创建标段容器）" inactive-text="否" />
           </el-form-item>
           <el-form-item label="项目描述">
-            <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!isNew && !isFollowing" />
+            <el-input v-model="projectForm.description" type="textarea" :rows="3" :disabled="!basicInfoEditable" />
           </el-form-item>
         </el-form>
       </el-card>
@@ -121,6 +121,42 @@
       <!-- 右上：招标信息 (status >= 已发公告) -->
       <el-card v-if="showBidding">
         <template #header><span>招标信息</span></template>
+        <div style="margin-bottom: 12px">
+          <el-alert
+            v-if="parseResult"
+            type="success"
+            :closable="true"
+            show-icon
+            :title="parseAlertTitle"
+            @close="parseResult = null"
+            style="margin-bottom: 8px"
+          />
+          <el-upload
+            ref="uploadRef"
+            :auto-upload="false"
+            :show-file-list="false"
+            :on-change="handleFileChange"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png"
+            style="display: inline-block; margin-right: 8px"
+          >
+            <el-button type="primary" :loading="parsing" :icon="Upload">
+              {{ parsing ? '解析中...' : '上传招标文件并解析' }}
+            </el-button>
+          </el-upload>
+          <span style="color:#999; font-size:12px">支持 PDF/DOCX/TXT/图片，单文件 ≤ 20MB</span>
+          <div v-if="bidDocuments.length" style="margin-top: 8px">
+            <div
+              v-for="(doc, idx) in bidDocuments"
+              :key="idx"
+              style="display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px dashed #eee"
+            >
+              <el-icon><DocumentIcon /></el-icon>
+              <span>{{ doc.filename }}</span>
+              <span style="color:#999; font-size:12px">{{ formatFileSize(doc.size) }}</span>
+              <el-button link type="danger" :icon="Delete" @click="handleDeleteDoc(idx)" />
+            </div>
+          </div>
+        </div>
         <el-form :model="biddingForm" label-width="100px">
           <el-row :gutter="16">
             <el-col :span="12">
@@ -269,6 +305,33 @@
       <!-- 右下：投标结果 (status >= 已投标) -->
       <el-card v-if="showResult">
         <template #header><span>投标结果</span></template>
+        <div style="margin-bottom: 12px">
+          <el-upload
+            ref="resultUploadRef"
+            :auto-upload="false"
+            :show-file-list="false"
+            :on-change="handleResultFileChange"
+            accept=".pdf,.docx,.txt,.jpg,.jpeg,.png"
+            style="display: inline-block; margin-right: 8px"
+          >
+            <el-button type="primary" :loading="resultParsing" :icon="Upload">
+              {{ resultParsing ? '解析中...' : '上传中标公告并解析' }}
+            </el-button>
+          </el-upload>
+          <span style="color:#999; font-size:12px">支持 PDF/DOCX/TXT/图片，单文件 ≤ 20MB</span>
+          <div v-if="resultDocuments.length" style="margin-top: 8px">
+            <div
+              v-for="(doc, idx) in resultDocuments"
+              :key="idx"
+              style="display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px dashed #eee"
+            >
+              <el-icon><DocumentIcon /></el-icon>
+              <span>{{ doc.filename }}</span>
+              <span style="color:#999; font-size:12px">{{ formatFileSize(doc.size) }}</span>
+              <el-button link type="danger" :icon="Delete" @click="handleDeleteResultDoc(idx)" />
+            </div>
+          </div>
+        </div>
         <el-form :model="resultForm" label-width="100px">
           <!-- 投标结果 -->
           <el-form-item label="投标结果">
@@ -489,12 +552,17 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useUserStore } from '../../stores/user'
+
+const userStore = useUserStore()
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete } from '@element-plus/icons-vue'
+import { Delete, Upload, Document as DocumentIcon } from '@element-plus/icons-vue'
 import {
   getProject, createProject, updateProject,
   publishProject, prepareProject, submitProject, abandonProject,
   getProjects, syncCompetitors, getProjectLots,
+  parseBidDocument, getBidDocuments, deleteBidDocument,
+  parseResultDocument, getResultDocuments, deleteResultDocument,
 } from '../../api/project'
 import { getUsers } from '../../api/user'
 import { getOrganizations } from '../../api/dict'
@@ -512,6 +580,23 @@ const users = ref([])
 const orgMap = ref({})  // id -> { id, name }
 const parentProjectName = ref('')
 const parentProjectOptions = ref([])  // 远程搜索入围标项目选项
+
+// ---- 招标文件解析 ----
+const uploadRef = ref(null)
+const parsing = ref(false)
+const parseResult = ref(null)
+const bidDocuments = ref([])
+
+// ---- 中标结果文件解析 ----
+const resultUploadRef = ref(null)
+const resultParsing = ref(false)
+const resultParseResult = ref(null)
+const resultDocuments = ref([])
+const parseAlertTitle = computed(() => {
+  if (!parseResult.value) return ''
+  const filename = parseResult.value.file?.filename || ''
+  return `已解析：${filename}（请核对后点击保存）`
+})
 
 // ---- 多标段支持 ----
 const lotList = ref([])
@@ -681,6 +766,8 @@ const isNotRegistered = computed(() => project.value.status === '未报名')
 const isRegistered = computed(() => project.value.status === '已报名')
 const isPreparing = computed(() => project.value.status === '准备投标')
 const isAbandoned = computed(() => project.value.status === '已放弃')
+// 项目基本信息字段（除 bidding_type / parent_project_id / is_multi_lot 外）在已发公告后仍可编辑
+const basicInfoEditable = computed(() => isNew.value || !isAbandoned.value)
 const isMultiLotParent = computed(() => project.value.is_multi_lot === true)
 const isMultiLotChild = computed(() => !isNew.value && projectForm.value.parent_project_id != null && project.value.parent_is_multi_lot === true && projectForm.value.bidding_type !== '入围分项')
 const canAbandon = computed(() => ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标'].includes(project.value.status))
@@ -1034,6 +1121,13 @@ watch(() => bidForm.value.has_deposit, (newVal) => {
   }
 })
 
+// 招标信息卡片首次可见时，投标专员默认为当前登录用户
+watch(showBidding, (visible) => {
+  if (visible && !biddingForm.value.bid_specialist_id && userStore.user?.id) {
+    biddingForm.value.bid_specialist_id = userStore.user.id
+  }
+})
+
 // ---- Helpers ----
 function parseJson(val, fallback = []) {
   if (Array.isArray(val)) return val
@@ -1135,6 +1229,8 @@ async function loadProject() {
   if (isMultiLotParent.value) {
     await loadLots()
   }
+  await loadBidDocuments()
+  await loadResultDocuments()
 }
 
 async function loadUsers() {
@@ -1153,6 +1249,220 @@ async function loadOrgNames() {
   } catch { /* ignore */ }
 }
 
+// ---- 招标文件解析 ----
+function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return ''
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+async function loadBidDocuments() {
+  if (isNew.value || !currentProjectId.value) {
+    bidDocuments.value = []
+    return
+  }
+  try {
+    const res = await getBidDocuments(currentProjectId.value)
+    bidDocuments.value = res.items || []
+  } catch { /* ignore */ }
+}
+
+function applyParsedFields(fields) {
+  if (!fields) return
+  // 解析有值就覆盖；找不到的字段（null/空）保持原值不动
+  const set = (formRef, key, value) => {
+    if (value == null || value === '') return
+    if (Array.isArray(value) && !value.length) return
+    formRef.value[key] = value
+  }
+  // 基本信息
+  set(projectForm, 'project_name', fields.project_name)
+  set(projectForm, 'bidding_unit_id', fields.bidding_unit_id)
+  if (fields.bidding_type && (isNew.value || isFollowing.value)) {
+    projectForm.value.bidding_type = fields.bidding_type
+  }
+
+  // 招标信息
+  set(biddingForm, 'agency_id', fields.agency_id)
+  set(biddingForm, 'publish_platform_id', fields.publish_platform_id)
+  set(biddingForm, 'tags', fields.tags && fields.tags.length ? fields.tags : null)
+  set(biddingForm, 'registration_deadline', fields.registration_deadline)
+  set(biddingForm, 'bid_deadline', fields.bid_deadline)
+  set(biddingForm, 'budget_amount', fields.budget_amount)
+  set(biddingForm, 'control_price_type', fields.control_price_type)
+  set(biddingForm, 'control_price_upper', fields.control_price_upper)
+  set(biddingForm, 'control_price_lower', fields.control_price_lower)
+  if (fields.is_prequalification != null) {
+    biddingForm.value.is_prequalification = fields.is_prequalification
+  }
+  set(biddingForm, 'bidding_notes', fields.bidding_notes)
+}
+
+async function handleFileChange(uploadFile) {
+  const file = uploadFile?.raw
+  if (!file) return
+  const ext = (file.name || '').toLowerCase().match(/(\.[^.]+)$/)?.[1] || ''
+  const allowed = ['.pdf', '.docx', '.txt', '.jpg', '.jpeg', '.png']
+  if (!allowed.includes(ext)) {
+    ElMessage.error('不支持的文件格式，请上传 PDF/DOCX/TXT/图片')
+    uploadRef.value?.clearFiles()
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    ElMessage.error('文件超过 20MB 限制')
+    uploadRef.value?.clearFiles()
+    return
+  }
+  parsing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await parseBidDocument(currentProjectId.value, fd)
+    parseResult.value = res
+    if (res.file) {
+      bidDocuments.value = [...bidDocuments.value, res.file]
+    }
+    applyParsedFields(res.fields)
+    // 后端可能为招标单位/代理单位新建了组织，刷新 orgMap
+    await loadOrgNames()
+    ElMessage.success('解析完成，请核对后保存')
+  } catch (err) {
+    const detail = err?.response?.data?.detail || err?.message || '解析失败，请重试或手动填写'
+    ElMessage.error(detail)
+  } finally {
+    parsing.value = false
+    uploadRef.value?.clearFiles()
+  }
+}
+
+async function handleDeleteDoc(idx) {
+  const target = bidDocuments.value[idx]
+  if (!target) return
+  try {
+    await ElMessageBox.confirm(`确认删除文件 "${target.filename || ''}" ？`, '提示', { type: 'warning' })
+  } catch { return }
+  // 判断是当前会话刚解析未保存的（无 stored_path 对应的 DB 记录）还是已保存的
+  // 已保存的条目通过 DB 删除；未保存的本地 splice
+  const savedList = await getBidDocuments(currentProjectId.value).then(r => r.items || []).catch(() => [])
+  const inDb = savedList.some(it => it.stored_path === target.stored_path)
+  if (inDb) {
+    const dbIdx = savedList.findIndex(it => it.stored_path === target.stored_path)
+    try {
+      await deleteBidDocument(currentProjectId.value, dbIdx)
+      ElMessage.success('已删除')
+    } catch (err) {
+      ElMessage.error(err?.response?.data?.detail || '删除失败')
+      return
+    }
+  }
+  await loadBidDocuments()
+  // 本地缓存中也同步移除（loadBidDocuments 已重置，此处兜底）
+  if (parseResult.value?.file?.stored_path === target.stored_path) {
+    parseResult.value = null
+  }
+}
+
+// ---- 中标结果文件解析 ----
+async function loadResultDocuments() {
+  if (isNew.value || !currentProjectId.value) {
+    resultDocuments.value = []
+    return
+  }
+  try {
+    const res = await getResultDocuments(currentProjectId.value)
+    resultDocuments.value = res.items || []
+  } catch { /* ignore */ }
+}
+
+function applyResultFields(fields) {
+  if (!fields) return
+  // 完全替换 competitors（保留我方条目）
+  if (Array.isArray(fields.competitors)) {
+    const ourOrgId = getOurOrgId()
+    const hasOurEntry = fields.competitors.some(c => Array.isArray(c.org_ids) && c.org_ids.includes(ourOrgId))
+    const newCompetitors = fields.competitors.map(c => ({
+      org_ids: Array.isArray(c.org_ids) ? c.org_ids : [],
+      price: Number(c.price) || 0,
+      score: Number(c.score) || 0,
+      is_shortlisted: false,
+      is_winning: !!c.is_winning,
+      _editing: false,
+    }))
+    if (!hasOurEntry) {
+      const ourExisting = resultForm.value.competitors.find(c => Array.isArray(c.org_ids) && c.org_ids.includes(ourOrgId))
+      if (ourExisting) newCompetitors.push({ ...ourExisting })
+    }
+    resultForm.value.competitors = newCompetitors
+    deriveWinningOrgs()
+  }
+  if (fields.contract_number != null) resultForm.value.contract_number = fields.contract_number
+  if (fields.contract_amount != null) resultForm.value.contract_amount = Number(fields.contract_amount) || 0
+  if (fields.is_won != null) resultForm.value.is_won = !!fields.is_won
+  if (fields.result_notes) resultForm.value.result_notes = fields.result_notes
+}
+
+async function handleResultFileChange(uploadFile) {
+  const file = uploadFile?.raw
+  if (!file) return
+  const ext = (file.name || '').toLowerCase().match(/(\.[^.]+)$/)?.[1] || ''
+  const allowed = ['.pdf', '.docx', '.txt', '.jpg', '.jpeg', '.png']
+  if (!allowed.includes(ext)) {
+    ElMessage.error('不支持的文件格式，请上传 PDF/DOCX/TXT/图片')
+    resultUploadRef.value?.clearFiles()
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    ElMessage.error('文件超过 20MB 限制')
+    resultUploadRef.value?.clearFiles()
+    return
+  }
+  resultParsing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await parseResultDocument(currentProjectId.value, fd)
+    resultParseResult.value = res
+    if (res.file) {
+      resultDocuments.value = [...resultDocuments.value, res.file]
+    }
+    applyResultFields(res.fields)
+    // 后端可能为参标单位新建了组织，刷新 orgMap 让 getOrgName 能解析名字
+    await loadOrgNames()
+    ElMessage.success('解析完成，请核对后保存')
+  } catch (err) {
+    const detail = err?.response?.data?.detail || err?.message || '解析失败，请重试或手动填写'
+    ElMessage.error(detail)
+  } finally {
+    resultParsing.value = false
+    resultUploadRef.value?.clearFiles()
+  }
+}
+
+async function handleDeleteResultDoc(idx) {
+  const target = resultDocuments.value[idx]
+  if (!target) return
+  try {
+    await ElMessageBox.confirm(`确认删除文件 "${target.filename || ''}" ？`, '提示', { type: 'warning' })
+  } catch { return }
+  const savedList = await getResultDocuments(currentProjectId.value).then(r => r.items || []).catch(() => [])
+  const inDb = savedList.some(it => it.stored_path === target.stored_path)
+  if (inDb) {
+    const dbIdx = savedList.findIndex(it => it.stored_path === target.stored_path)
+    try {
+      await deleteResultDocument(currentProjectId.value, dbIdx)
+      ElMessage.success('已删除')
+    } catch (err) {
+      ElMessage.error(err?.response?.data?.detail || '删除失败')
+      return
+    }
+  }
+  await loadResultDocuments()
+  if (resultParseResult.value?.file?.stored_path === target.stored_path) {
+    resultParseResult.value = null
+  }
+}
+
 // ---- Save ----
 function collectSaveData() {
   const data = {
@@ -1161,7 +1471,7 @@ function collectSaveData() {
     manager_ids: projectForm.value.manager_ids,
   }
   if (showBidding.value) {
-    Object.assign(data, { ...biddingForm.value, tags: biddingForm.value.tags })
+    Object.assign(data, { ...biddingForm.value, tags: biddingForm.value.tags, bid_documents: bidDocuments.value })
   }
   if (showBid.value) {
     Object.assign(data, { ...bidForm.value, partner_ids: bidForm.value.partner_ids })
@@ -1174,6 +1484,7 @@ function collectSaveData() {
         is_shortlisted: c.is_shortlisted, is_winning: c.is_winning,
       })),
       scoring_details: resultForm.value.scoring_details,
+      result_documents: resultDocuments.value,
     })
     // 始终发送 is_won/is_bid_failed，让后端根据中标勾选情况推导状态
     // 无中标勾选时后端会自动回退到已投标
@@ -1275,6 +1586,10 @@ onMounted(async () => {
   await loadProject()
   if (isMultiLotParent.value) {
     await loadLots()
+  }
+  // 新建项目时，投标专员默认为当前登录用户
+  if (isNew.value && userStore.user?.id && !biddingForm.value.bid_specialist_id) {
+    biddingForm.value.bid_specialist_id = userStore.user.id
   }
 })
 </script>

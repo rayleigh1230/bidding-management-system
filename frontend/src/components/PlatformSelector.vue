@@ -105,5 +105,14 @@ onMounted(() => preloadOptions())
 
 watch(() => props.modelValue, (val) => {
   if (val && !loaded) preloadOptions()
+  // Reload options if the selected id is missing (e.g. auto-created externally during parse)
+  if (val && loaded) {
+    const exists = options.value.some(o => o.id === val)
+    if (!exists) {
+      getPlatforms({ page_size: 500 }).then(res => {
+        options.value = res.items || []
+      }).catch(() => {})
+    }
+  }
 }, { immediate: true })
 </script>

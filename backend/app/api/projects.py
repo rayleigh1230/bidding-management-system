@@ -387,7 +387,7 @@ def enrich_project_list(projects: list, db: Session) -> list:
 
 # ---- JSON list fields that need serialization ----
 
-_JSON_LIST_FIELDS = {"manager_ids", "tags", "bid_documents", "partner_ids", "bid_files", "competitors", "scoring_details", "winning_org_ids"}
+_JSON_LIST_FIELDS = {"manager_ids", "tags", "bid_documents", "result_documents", "partner_ids", "bid_files", "competitors", "scoring_details", "winning_org_ids"}
 
 
 # ---- Endpoints ----

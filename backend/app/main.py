@@ -71,6 +71,14 @@ def on_startup():
             conn.commit()
         print("Migration: added is_multi_lot column to project_infos")
 
+    # Auto-migrate: add result_documents column to project_infos if not exists
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'result_documents' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN result_documents JSON DEFAULT '[]'"))
+            conn.commit()
+        print("Migration: added result_documents column to project_infos")
+
     # Create default admin user
     from sqlalchemy.orm import Session
     from .models.user import User
@@ -128,6 +136,7 @@ from .api.organizations import router as orgs_router
 from .api.platforms import router as platforms_router
 from .api.managers import router as managers_router
 from .api.projects import router as projects_router
+from .api.documents import router as documents_router
 
 app.include_router(auth_router)
 app.include_router(users_router)
@@ -137,3 +146,4 @@ app.include_router(orgs_router)
 app.include_router(platforms_router)
 app.include_router(managers_router)
 app.include_router(projects_router)
+app.include_router(documents_router)

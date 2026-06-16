@@ -99,6 +99,7 @@ class ProjectInfo(Base):
     bid_specialist_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
     bid_documents: Mapped[str] = mapped_column(JSON, default=[])
     bidding_notes: Mapped[str] = mapped_column(Text, default="")
+    result_documents: Mapped[str] = mapped_column(JSON, default=[])
 
     # ---- Section 3: 投标信息 (status >= 准备投标) ----
     partner_ids: Mapped[str] = mapped_column(JSON, default=[])
