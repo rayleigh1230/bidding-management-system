@@ -91,12 +91,17 @@ class JhzjcsScraper(BaseScraper):
         publish_time = raw.get("publishTime") or None
         publish_date = parse_date_safe(publish_time)
 
+        # 中介超市是 SPA，用项目 ID 构造详情页链接
+        project_id = raw.get("id") or raw.get("projectId") or raw.get("uuid") or ""
+        source_url = f"{PAGE_URL}?id={project_id}" if project_id else PAGE_URL
+
         return ScrapeItem(
             project_name=title,
             bidding_type="中介超市",
             bidding_unit_name=dept_name,
             publish_platform_name="金华中介超市",
             region='["浙江省","金华市"]',
+            source_url=source_url,
             publish_date=publish_date,
             description=(
                 f"来源: jhzjcs.ggzyjy.jinhua.gov.cn\n"

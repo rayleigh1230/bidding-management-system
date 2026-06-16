@@ -102,6 +102,9 @@ class GgzyScraper(BaseScraper):
         publish_date = parse_date_safe(webdate)
 
         source_url = raw.get("url") or raw.get("linkurl") or None
+        # ggzy API 返回相对路径，需拼接域名
+        if source_url and source_url.startswith("/"):
+            source_url = "https://ggzy.zj.gov.cn" + source_url
 
         return ScrapeItem(
             project_name=title,
