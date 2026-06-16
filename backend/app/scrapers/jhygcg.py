@@ -88,7 +88,7 @@ class JhygcgScraper(BaseScraper):
         article_id = raw.get("articleId", "")
         external_no = raw.get("prjNo") or article_id or None
         region = '["浙江省","金华市"]'
-        source_url = f"https://www.jhygcg.com/home/detail?bulletinId={article_id}" if article_id else None
+        source_url = f"https://www.jhygcg.com/detail?bulletinId={article_id}" if article_id else None
 
         return ScrapeItem(
             project_name=title,
