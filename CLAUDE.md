@@ -40,13 +40,19 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 - **`api/projects.py`** — Single FastAPI router for all CRUD + flow operations. Price calculation helpers (`_control_type_str`, `_format_price`, `_calc_winning_amount`, etc.) live here. Shortlisting bid (入围标) skips auto-calculation of winning_price/winning_amount.
 - **`api/stats.py`** — Statistics endpoints, queries single `project_infos` table directly.
 - **`api/documents.py`** — Document parsing endpoints. `POST /api/documents/parse` accepts `parse_type` query (`bidding` for tender announcements, `result` for winning announcements), uploads file to Qwen-Long via DashScope, returns form fields. Also exposes `GET/DELETE /api/documents/{id}/files` (bid_documents) and `GET/DELETE /api/documents/{id}/result-files` (result_documents). Helper functions: `_save_upload`, `_match_or_create_org`, `_match_or_create_platform`, `_build_bidding_response`, `_build_result_response`.
+- **`api/scrape.py`** — Auto-scrape endpoints. `POST /api/scrape/run` triggers a scrape run (admin only, returns `{run_id}` immediately, runs `run_scraper` via BackgroundTasks). `GET /api/scrape/status/{run_id}` for polling. `GET /api/scrape/runs` lists history. `GET /api/scrape/runs/{run_id}` returns detail with item_logs. `require_admin` dependency checks `role == "admin"`. Prevents concurrent runs (409 if another run is `running`).
 - **`services/document_parser.py`** — Qwen-Long integration via OpenAI-compatible DashScope client. `QwenLongParser.upload_file()` → `parse(file_id, parse_type, control_price_type)` → `_normalize(raw, parse_type)` dispatches to `_normalize_bidding` or `_normalize_result`. `FIELD_ALIASES` / `RESULT_CANDIDATE_ALIASES` / `RESULT_TOP_ALIASES` map Chinese LLM keys to English. `_build_result_prompt()` injects price unit hint based on project's `control_price_type`.
-- **`main.py`** — App factory: CORS middleware, startup event (auto-creates tables + default admin + default organization with org_type=ours + auto-migration), route registration. Also registers `documents_router` and auto-migrates `result_documents` JSON column.
+- **`services/scrape_runner.py`** — Main scrape orchestration. `run_scraper(run_id, user_id)` iterates all scrapers, calls `fetch_with_retry` → `normalize` → `_process_item`. `_find_duplicate` checks `external_no` first, then `project_name`. `_process_item` creates ProjectInfo with `status=following`. `_record_failure` / `_log_item` write to `scrape_item_logs`. Counter invariant: `total_count = created_count + skipped_count + failed_count`.
+- **`services/org_matcher.py`** — Shared `match_or_create_org` / `match_or_create_platform` helpers, reused by both `documents.py` and `scrape_runner.py`.
+- **`scrapers/`** — Bid announcement scrapers. `base.py` defines `BaseScraper` (abstract `fetch`/`normalize`, `fetch_with_retry` with 3 retries + exponential backoff), `ScrapeItem` dataclass, `SiteFetchError`, `KEYWORDS`, `match_keywords()`, `match_region_zhejiang()`, `parse_date_safe()`. `__init__.py:ScraperRegistry` lazily imports and instantiates all scrapers via `importlib.import_module` (fault-tolerant — a broken scraper doesn't crash the run). Site modules: `ccgp.py` (scrapling/curl_cffi), `ggzy.py` (requests + WAF), `jhygcg.py` (requests), `jhzjcs.py` (Playwright, delayed import in `fetch()`).
+- **`main.py`** — App factory: CORS middleware, startup event (auto-creates tables + default admin + default organization with org_type=ours + auto-migration), route registration. Also registers `documents_router` and auto-migrates `result_documents` JSON column. Also registers `scrape_router`, imports `scrape` model, auto-migrates `external_no`/`source`/`source_url` columns, and cleans up orphan scrape runs (status=running + finished_at=NULL) on startup.
 
 ### Frontend Structure (`frontend/src/`)
 - **`api/project.js`** — Single Axios-based API module for all project operations (CRUD + flow). Includes `parseBidDocument` / `parseResultDocument` (multipart upload with `parse_type` query param, 200s timeout), `getBidDocuments` / `getResultDocuments`, `deleteBidDocument` / `deleteResultDocument`.
+- **`api/scrape.js`** — Scrape API: `triggerScrape` / `getScrapeStatus` / `getScrapeRuns` / `getScrapeRunDetail`.
 - **`components/`** — Shared components: `Layout.vue` (sidebar + header shell), `OrgSelector` (remote search + inline create, `excludeOurs` prop filters out our company), `PlatformSelector`/`ManagerSelector` (remote search + inline create), `RegionCascader` (省市区 picker).
-- **`views/project/`** — Two pages: `ProjectList.vue` (list with collapsible advanced search panel, custom column selector per-status config, and quick status filter buttons) and `ProjectDetail.vue` (single page with 4 card sections in 2x2 grid layout).
+- **`views/project/`** — Two pages: `ProjectList.vue` (list with collapsible advanced search panel, custom column selector per-status config, quick status filter buttons, and a "抓取招标信息" button visible to admins that triggers scrape + polls progress) and `ProjectDetail.vue` (single page with 4 card sections in 2x2 grid layout).
+- **`views/scrape/ScrapeHistory.vue`** — Scrape run history list + detail drawer (all users can view).
 - **`stores/user.js`** — Pinia store for auth state (token + user in localStorage).
 - **`router/index.js`** — Vue Router with auth guard, lazy-loaded routes.
 
@@ -56,10 +62,12 @@ SQLite file at `backend/data/app.db`. Auto-created on first startup. To reset: d
 
 | Section | Columns cover | Visible when |
 |---------|--------------|-------------|
-| 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, parent_project_id (入围分项关联父入围标), etc. | Always |
+| 项目基本信息 | bidding_type, project_name, bidding_unit_id, region, manager_ids, status, parent_project_id (入围分项关联父入围标), external_no (外部公告编号，用于抓取去重), source (来源站点标识：ccgp/ggzy/jhygcg/jhzjcs/manual), source_url (原始公告链接), etc. | Always |
 | 招标信息 | agency_id, publish_platform_id, tags, deadlines, budget_amount, control_price_type/upper/lower, is_prequalification (是否入围标), is_multi_lot (是否多标段), bid_documents (招标文件元信息 JSON), is_registered (虚拟字段，从 status 推导), etc. | status >= 已发公告 |
 | 投标信息 | partner_ids, bid_method, is_consortium_lead, deposit fields, our_price, etc. | status >= 准备投标 |
 | 投标结果 | competitors (含 org_ids/price/score/is_winning), scoring_details, is_won + is_bid_failed (三态：已中标/未中标/流标), winning_org_ids (自动推导), winning_price/amount, result_deposit_status, result_documents (中标公告文件元信息 JSON), contract fields, etc. | status >= 已投标 |
+
+**Scrape tables**: `scrape_runs` (run-level: started_at, finished_at, triggered_by, status=running/success/partial/failed, total/created/skipped/failed counts, sites_summary JSON, error_summary JSON) and `scrape_item_logs` (per-item: source, external_no, project_name, source_url, result=created/skipped/failed, project_id, skip_reason, error_message). Both auto-created on startup via `Base.metadata.create_all`.
 
 **Field naming for merged columns:**
 - BiddingInfo.notes → `bidding_notes`
@@ -136,8 +144,17 @@ Flow endpoints only change the status field — no new records are created:
 - **入围标 LLM detection**: `SYSTEM_PROMPT` field `是否资格预审` doubles as `是否入围标`. Trigger keywords include 入围 / 入围标 / 短名单 / 资格预审 / 合格供应商库 / 框架协议 / 入围候选人. `FIELD_ALIASES` maps both Chinese keys to `is_prequalification`.
 - **Bid specialist auto-follow**: `ProjectDetail.vue` has `watch(showBidding)` that defaults `biddingForm.bid_specialist_id` to `userStore.user.id` when bidding card first becomes visible (status ≥ 已发公告) AND field is empty. Uses Pinia `useUserStore` (loaded from localStorage via `/api/auth/me` after login).
 - **Post-parse orgMap refresh**: `handleFileChange` / `handleResultFileChange` call `await loadOrgNames()` after `applyParsedFields` / `applyResultFields`. Required because `_match_or_create_org` creates new orgs during parse; without refresh, `getOrgName(oid)` returns '未知单位' for newly created orgs not yet in `orgMap`.
+- **Auto-scrape**: `POST /api/scrape/run` (admin only) triggers `run_scraper(run_id, user_id)` via FastAPI BackgroundTasks. Iterates all registered scrapers (ccgp/ggzy/jhygcg/jhzjcs) via `ScraperRegistry.all()` (lazy-loaded, fault-tolerant). Prevents concurrent runs (409). Orphan runs cleaned on startup.
+- **Scraper architecture**: `scrapers/base.py:BaseScraper` (abstract `fetch`/`normalize`, `fetch_with_retry` with 3 retries + exponential backoff). `ScraperRegistry` uses `importlib.import_module` with try/except per scraper. Site modules: `ccgp.py` (scrapling), `ggzy.py` (requests + WAF via session cookie), `jhygcg.py` (requests), `jhzjcs.py` (Playwright, delayed import).
+- **Keyword + region filter**: `scrapers/base.py:KEYWORDS` = [检测/人防/防雷/消防/勘察/测绘/监测/鉴定/评估/试验], OR match. `match_region_zhejiang()` checks title for 浙江 city names, or CCGP zoneId / GGZY infoc starting with 330. jhygcg/jhzjcs are inherently 金华市, skip region check.
+- **Scrape dedup**: `_find_duplicate` checks `external_no` (indexed) first, then exact `project_name`. No fuzzy matching. Does NOT update existing projects on duplicate (preserves user edits).
+- **Playwright delayed import**: `jhzjcs.py` imports playwright inside `fetch()`, so backend starts fine even if playwright is not installed. Uses system Chrome via `executable_path` when available.
+- **Scrape project fields**: Created projects have `status=跟进中`, `source` set to scraper name, `external_no` from announcement number, `source_url` from original link. Manual projects default `source=manual`.
+- **org_matcher.py**: `match_or_create_org` / `match_or_create_platform` extracted from `api/documents.py` into `services/org_matcher.py` for reuse by both document parsing and scrape runner.
 - **No tests**: The project has no test suite.
 
 ## Design Document
 Full system design spec: `docs/superpowers/specs/2026-04-01-bidding-management-system-design.md`
 Implementation plan: `docs/superpowers/plans/2026-04-02-bidding-management-system-plan.md`
+Auto-fetch integration spec: `docs/superpowers/specs/2026-06-16-auto-fetch-integration-design.md`
+Auto-fetch integration plan: `docs/superpowers/plans/2026-06-16-auto-fetch-integration-plan.md`
