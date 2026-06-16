@@ -7,7 +7,7 @@ from datetime import date
 from typing import Optional
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, match_region_zhejiang,
+    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, match_region_zhejiang,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,8 @@ class CcgpScraper(BaseScraper):
         if not title:
             return None
         if not match_keywords(title):
+            return None
+        if is_result_announcement(title):
             return None
 
         source_url = raw.get("url")

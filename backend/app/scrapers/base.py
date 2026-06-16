@@ -27,6 +27,24 @@ def match_keywords(text: str) -> bool:
     return any(kw in text for kw in KEYWORDS)
 
 
+# 中标/结果类公告排除关键词：标题含这些词组说明是结果公示，不是招标公告
+RESULT_KEYWORDS = [
+    "中标公告", "中标结果", "中标候选人", "中标公示",
+    "成交公告", "成交结果", "成交候选人", "成交公示",
+    "开标记录", "开标结果",
+    "结果公示", "结果公告", "结果记录",
+    "废标公告", "流标公告", "终止公告",
+    "合同公告", "合同公示",
+]
+
+
+def is_result_announcement(text: str) -> bool:
+    """判断标题是否为中标/成交/结果类公告（应排除）。"""
+    if not text:
+        return False
+    return any(kw in text for kw in RESULT_KEYWORDS)
+
+
 def match_region_zhejiang(region_text: str = None, extra: dict = None) -> bool:
     """浙江地区判断。
     region_text: 标题/地区文本

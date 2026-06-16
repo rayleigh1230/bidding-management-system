@@ -8,7 +8,7 @@ from datetime import date
 from typing import Optional
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, parse_date_safe,
+    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, parse_date_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,8 @@ class JhzjcsScraper(BaseScraper):
         if not title:
             return None
         if not match_keywords(title):
+            return None
+        if is_result_announcement(title):
             return None
 
         dept_name = raw.get("deptName") or None

@@ -1,6 +1,6 @@
 """浙江省公共资源交易平台 — requests POST JSON API（带 WAF 绕过）。
 站点 URL: https://ggzy.zj.gov.cn
-分类号 002001003 = 招标公告；地区 infoc=330 = 浙江全省。
+分类号 002001001 = 招标公告；地区 infoc=330 = 浙江全省。
 """
 import logging
 from datetime import date
@@ -9,7 +9,7 @@ from typing import Optional
 import requests
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, parse_date_safe,
+    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, parse_date_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class GgzyScraper(BaseScraper):
                 "fields": "title", "cnum": "001",
                 "sort": '{"webdate":"0"}', "cl": 200,
                 "condition": [
-                    {"fieldName": "categorynum", "isLike": True, "likeType": 2, "equal": "002001003"},
+                    {"fieldName": "categorynum", "isLike": True, "likeType": 2, "equal": "002001001"},
                     {"fieldName": "infoc", "isLike": True, "likeType": 2, "equal": "330"},
                     {"fieldName": "titlenew", "isLike": True, "likeType": 0, "equal": kw},
                 ],
@@ -91,6 +91,8 @@ class GgzyScraper(BaseScraper):
         if not title:
             return None
         if not match_keywords(title):
+            return None
+        if is_result_announcement(title):
             return None
 
         region_text = raw.get("infod") or ""

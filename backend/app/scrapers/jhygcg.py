@@ -9,7 +9,7 @@ from typing import Optional
 import requests
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, parse_date_safe,
+    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, parse_date_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,8 @@ class JhygcgScraper(BaseScraper):
         if not title:
             return None
         if not match_keywords(title):
+            return None
+        if is_result_announcement(title):
             return None
 
         publish_date = parse_date_safe(raw.get("publishDate"))
