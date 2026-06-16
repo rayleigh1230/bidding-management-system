@@ -50,6 +50,11 @@
             </el-menu-item>
           </el-sub-menu>
 
+          <el-menu-item index="/scrape/history">
+            <el-icon><Download /></el-icon>
+            <span>抓取记录</span>
+          </el-menu-item>
+
           <el-menu-item index="/logs">
             <el-icon><Notebook /></el-icon>
             <span>操作日志</span>

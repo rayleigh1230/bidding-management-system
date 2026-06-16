@@ -67,6 +67,12 @@ const routes = [
         component: () => import('../views/LogList.vue'),
         meta: { title: '操作日志' },
       },
+      {
+        path: 'scrape/history',
+        name: 'ScrapeHistory',
+        component: () => import('../views/scrape/ScrapeHistory.vue'),
+        meta: { title: '抓取记录' },
+      },
     ],
   },
 ]
