@@ -25,6 +25,7 @@ class ScraperRegistry:
             ("ggzy", "GgzyScraper"),
             ("jhygcg", "JhygcgScraper"),
             ("jhzjcs", "JhzjcsScraper"),
+            ("jhggzy", "JhggzyScraper"),
         ]:
             try:
                 mod = importlib.import_module(f".{module_name}", package=__name__)
