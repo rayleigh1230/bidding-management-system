@@ -124,7 +124,35 @@ class JhggzyScraper(BaseScraper):
     @staticmethod
     def _parse_html_items(html_frag: str) -> list:
         """解析 AJAX API 返回的 HTML 片段为 [{title, url, publish_date}, ...]。"""
-        raise NotImplementedError("Task 3 实现")
+        if not html_frag:
+            return []
+        items = []
+        # 匹配 <a href="...art_<32hex>.html" ...>标题内容</a>
+        pattern = re.compile(
+            r'<a[^>]+href="([^"]*?art_[a-f0-9]+\.html)"[^>]*>(.*?)</a>',
+            re.DOTALL,
+        )
+        for m in pattern.finditer(html_frag):
+            url = m.group(1)
+            title_html = m.group(2)
+            # 剥 HTML 标签 + 规范化空白
+            title = re.sub(r"<[^>]+>", "", title_html)
+            title = re.sub(r"\s+", " ", title).strip()
+            # 去掉混在标题里的「公告类型：xxx」前缀（保留纯标题）
+            title = re.sub(r"^公告类型：\S+\s*", "", title)
+            # 提取发布日期（标题尾部或紧随其后的文本含 YYYY-MM-DD）
+            date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", title)
+            publish_date = date_match.group(1) if date_match else None
+            # 把日期从标题末尾去掉，得到纯标题
+            if date_match:
+                title = title[:date_match.start()].strip()
+            if title and url:
+                items.append({
+                    "title": title,
+                    "url": url,
+                    "publish_date": publish_date,
+                })
+        return items
 
     def _fetch_source(self, page_id: str, date_str: str) -> list:
         """翻页调用 AJAX API，返回 publish_date == date_str 的原始记录。"""
