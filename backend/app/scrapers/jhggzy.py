@@ -107,7 +107,7 @@ class JhggzyScraper(BaseScraper):
             )
             resp.raise_for_status()
             html = resp.text
-            qd_match = re.search(r"querydata=\"([^\"]+)\"", html)
+            qd_match = re.search(r"query[Dd]ata=\"([^\"]+)\"", html)
             if not qd_match:
                 logger.warning(f"jhggzy 未在 {page_url} 找到 querydata")
                 return None
@@ -139,7 +139,7 @@ class JhggzyScraper(BaseScraper):
             title = re.sub(r"<[^>]+>", "", title_html)
             title = re.sub(r"\s+", " ", title).strip()
             # 去掉混在标题里的「公告类型：xxx」前缀（保留纯标题）
-            title = re.sub(r"^公告类型：\S+\s*", "", title)
+            title = re.sub(r"\s*公告类型：\S+\s*", " ", title).strip()
             # 提取发布日期（标题尾部或紧随其后的文本含 YYYY-MM-DD）
             date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", title)
             publish_date = date_match.group(1) if date_match else None
