@@ -205,8 +205,58 @@ class JhggzyScraper(BaseScraper):
 
     def fetch(self, day: date) -> list:
         """遍历 33 个数据源，返回原始记录（含 _county / _type 元字段）。"""
-        raise NotImplementedError("Task 5 实现")
+        results = []
+        date_str = day.strftime("%Y-%m-%d")
+        for county, ann_type, page_url in SOURCES:
+            try:
+                page_id = self._resolve_page_id(page_url)
+                if not page_id:
+                    logger.warning(f"jhggzy 跳过（无 pageId）: {county}/{ann_type}")
+                    continue
+                items = self._fetch_source(page_id, date_str)
+                for item in items:
+                    item["_county"] = county
+                    item["_type"] = ann_type
+                    results.append(item)
+                if items:
+                    logger.info(f"jhggzy {county}/{ann_type}: 抓到 {len(items)} 条")
+            except Exception as e:
+                logger.warning(f"jhggzy {county}/{ann_type} 抓取失败: {e}")
+                continue
+        return results
 
     def normalize(self, raw: dict) -> Optional[ScrapeItem]:
         """原始记录 → ScrapeItem。返回 None 表示过滤掉。"""
-        raise NotImplementedError("Task 5 实现")
+        title = (raw.get("title") or "").strip()
+        if not title:
+            return None
+        if is_result_announcement(title):
+            return None
+        if not match_keywords(title):
+            return None
+
+        county = raw.get("_county", "")
+        ann_type = raw.get("_type", "")
+        url = raw.get("url", "")
+        full_url = BASE_URL + url if url.startswith("/") else url
+        publish_date = parse_date_safe(raw.get("publish_date"))
+
+        # artId（URL 里 32 位 hex）作为 external_no，用于去重
+        art_match = re.search(r"art_([a-f0-9]+)\.html", url)
+        external_no = f"art_{art_match.group(1)}" if art_match else None
+
+        return ScrapeItem(
+            project_name=title,
+            bidding_type="公开招标",
+            publish_platform_name="金华市公共资源交易网",
+            region=f'["浙江省","金华市","{county}"]',
+            external_no=external_no,
+            source_url=full_url,
+            publish_date=publish_date,
+            description=(
+                f"来源: ggzyjy.jinhua.gov.cn\n"
+                f"类型: {ann_type}\n"
+                f"县区: {county}\n"
+                f"原始链接: {full_url}"
+            ),
+        )
