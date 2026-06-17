@@ -21,7 +21,7 @@ HEADERS = {
     "Referer": "https://www.jhygcg.com/home",
 }
 
-SEARCH_KEYWORDS = ["检测", "人防", "防雷", "消防", "勘察", "测绘", "监测", "鉴定", "评估", "试验"]
+SEARCH_KEYWORDS = ["检测", "人防", "防雷", "勘察", "测绘", "监测", "鉴定", "试验", "定检", "年检"]
 
 
 class JhygcgScraper(BaseScraper):
