@@ -156,7 +156,52 @@ class JhggzyScraper(BaseScraper):
 
     def _fetch_source(self, page_id: str, date_str: str) -> list:
         """翻页调用 AJAX API，返回 publish_date == date_str 的原始记录。"""
-        raise NotImplementedError("Task 4 实现")
+        results = []
+        for page_no in range(1, MAX_PAGES_PER_SOURCE + 1):
+            try:
+                params = {
+                    "webId": WEB_ID,
+                    "pageId": page_id,
+                    "parseType": "bulidstatic",
+                    "pageType": "column",
+                    "tagId": TAG_ID,
+                    "tplSetId": TPL_SET_ID,
+                    "paramJson": json.dumps({
+                        "pageNo": page_no,
+                        "pageSize": PAGE_SIZE,
+                    }),
+                }
+                resp = requests.get(
+                    API_URL, params=params, headers=HEADERS,
+                    timeout=self.REQUEST_TIMEOUT, verify=False,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if not data.get("success"):
+                    break
+                html_frag = (data.get("data") or {}).get("html", "")
+                if not html_frag:
+                    break
+                page_items = self._parse_html_items(html_frag)
+                if not page_items:
+                    break
+
+                stop = False
+                for item in page_items:
+                    pd = item.get("publish_date")
+                    if pd == date_str:
+                        results.append(item)
+                    elif pd and pd < date_str:
+                        # 此条及之后都是历史数据，本页处理完即停
+                        stop = True
+                if stop:
+                    break
+            except Exception as e:
+                logger.warning(
+                    f"jhggzy 翻页失败 page_id={page_id} pageNo={page_no}: {e}"
+                )
+                break
+        return results
 
     def fetch(self, day: date) -> list:
         """遍历 33 个数据源，返回原始记录（含 _county / _type 元字段）。"""
