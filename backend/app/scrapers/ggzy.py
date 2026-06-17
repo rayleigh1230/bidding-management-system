@@ -1,12 +1,14 @@
 """浙江省公共资源交易平台 — requests POST JSON API（带 WAF 绕过）。
 站点 URL: https://ggzy.zj.gov.cn
-覆盖 3 类业务相关公告：
-  - 002001001 招标公告
-  - 002001002 资格预审公告
-  - 002001011 招标文件公示
+覆盖 4 交易领域下各领域实际存在的业务相关公告类型，共 9 个数据源：
+  工程建设: 招标公告(002001001) / 资格预审公告(002001002) / 招标文件公示(002001011)
+  政府采购: 采购公告(002002001) / 竞争性磋商公告(002002005) / 竞争性谈判公告(002002006) / 询价公告(002002008)
+  国企采购: 交易公告(002011001)  —— 该领域侧栏仅「交易公告/交易结果」2 类
+  小额工程: 交易公告(002012001)  —— 该领域侧栏仅「交易公告/交易结果」2 类
+注：各领域的公告类型体系不同，不能统一套同一组类型代码。
 地区 infoc=33 = 浙江全省（前缀匹配 33 开头的 6 位地区代码）。
 不传服务端 titlenew 关键词过滤（站点分词会漏抓），改为 1 次按日期拿全部，
-本地 normalize 用 match_keywords 过滤。
+本地 normalize 用 match_keywords + is_result_announcement 过滤。
 """
 import logging
 from datetime import date
@@ -31,15 +33,26 @@ HEADERS = {
     "Origin": "https://ggzy.zj.gov.cn",
 }
 
-# 业务相关公告类型（招标前/招标中，不含中标结果类）
+# 9 个数据源（categorynum, "领域-类型"）
+# 各领域类型体系不同：工程建设 13 类细分、政府采购 8 类细分、国企采购/小额工程 仅 2 类
 CATEGORIES = [
-    ("002001001", "招标公告"),
-    ("002001002", "资格预审公告"),
-    ("002001011", "招标文件公示"),
+    # 工程建设
+    ("002001001", "工程建设-招标公告"),
+    ("002001002", "工程建设-资格预审公告"),
+    ("002001011", "工程建设-招标文件公示"),
+    # 政府采购
+    ("002002001", "政府采购-采购公告"),
+    ("002002005", "政府采购-竞争性磋商公告"),
+    ("002002006", "政府采购-竞争性谈判公告"),
+    ("002002008", "政府采购-询价公告"),
+    # 国企采购（侧栏仅「交易公告」1 类业务相关）
+    ("002011001", "国企采购-交易公告"),
+    # 小额工程（侧栏仅「交易公告」1 类业务相关）
+    ("002012001", "小额工程-交易公告"),
 ]
 
 PAGE_SIZE = 100
-MAX_PAGES = 10  # 单类型最多翻 10 页 = 1000 条兜底
+MAX_PAGES = 10  # 单数据源最多翻 10 页 = 1000 条兜底
 
 
 class GgzyScraper(BaseScraper):
@@ -47,7 +60,7 @@ class GgzyScraper(BaseScraper):
     requires_playwright = False
 
     def fetch(self, day: date) -> list[dict]:
-        """遍历 3 类公告，每类按当天日期翻页拿全部，合并去重。"""
+        """遍历 9 个数据源，每个按当天日期翻页拿全部，合并去重。"""
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -91,22 +104,19 @@ class GgzyScraper(BaseScraper):
                     records = data.get("result", {}).get("records", []) or []
                     if not records:
                         break
-                    new_added = 0
                     for rec in records:
                         rid = rec.get("id") or rec.get("infoid") or rec.get("linkurl") or ""
                         if rid and rid not in seen_ids:
                             seen_ids.add(rid)
                             rec["_category"] = cat_name
                             results.append(rec)
-                            new_added += 1
                     # 不足一页说明已到末尾
                     if len(records) < PAGE_SIZE:
                         break
                 except Exception as e:
                     logger.warning(f"ggzy {cat_name} 第 {page_idx+1} 页抓取失败: {e}")
                     break
-            if results:
-                logger.info(f"ggzy {cat_name}: 累计 {len(results)} 条")
+            logger.info(f"ggzy {cat_name}: 累计 {len(results)} 条")
 
         return results
 
