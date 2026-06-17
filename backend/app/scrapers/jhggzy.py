@@ -82,6 +82,7 @@ class JhggzyScraper(BaseScraper):
     requires_playwright = False
 
     def __init__(self):
+        super().__init__()
         self._page_id_cache = {}  # url -> pageId
 
     def _resolve_page_id(self, page_url: str) -> Optional[str]:
