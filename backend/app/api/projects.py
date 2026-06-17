@@ -416,6 +416,9 @@ def list_projects(
     budget_max: Optional[float] = Query(None, description="预算金额最大值"),
     winning_amount_min: Optional[float] = Query(None, description="中标金额最小值"),
     winning_amount_max: Optional[float] = Query(None, description="中标金额最大值"),
+    bid_specialist_id: Optional[int] = Query(None, description="投标专员ID"),
+    include_unassigned_specialist: bool = Query(False, description="包含未指派专员的项目"),
+    exclude_abandoned: bool = Query(False, description="排除已放弃项目（我的项目场景用）"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     db: Session = Depends(get_db),
@@ -468,6 +471,18 @@ def list_projects(
         query = query.filter(text(
             "EXISTS (SELECT 1 FROM json_each(project_infos.partner_ids) WHERE json_each.value = :pid)"
         )).params(pid=partner_id)
+    # 投标专员：支持"我的项目"场景（专员=指定用户 OR 未指派）
+    if bid_specialist_id or include_unassigned_specialist:
+        from sqlalchemy import or_
+        conds = []
+        if bid_specialist_id:
+            conds.append(ProjectInfo.bid_specialist_id == bid_specialist_id)
+        if include_unassigned_specialist:
+            conds.append(ProjectInfo.bid_specialist_id.is_(None))
+        query = query.filter(or_(*conds)) if len(conds) > 1 else query.filter(conds[0])
+    # 排除已放弃项目（"我的项目"场景）
+    if exclude_abandoned:
+        query = query.filter(ProjectInfo.status != ProjectStatus.abandoned)
     # 投标方式
     if bid_method:
         query = query.filter(ProjectInfo.bid_method == bid_method)
@@ -915,11 +930,15 @@ def abandon_project(
         raise HTTPException(status_code=400, detail="项目已放弃")
 
     project.status = ProjectStatus.abandoned
-    if body and "reason" in body:
-        project.abandon_reason = body["reason"]
+    if body:
+        if "reason" in body:
+            project.abandon_reason = body["reason"] or ""
+        if "notes" in body:
+            project.abandon_notes = body["notes"] or ""
 
     reason = body.get("reason", "") if body else ""
-    log_operation(db, current_user.id, "abandon", "project", project.id, f"放弃项目: {project.project_name}, 原因: {reason}")
+    notes = body.get("notes", "") if body else ""
+    log_operation(db, current_user.id, "abandon", "project", project.id, f"放弃项目: {project.project_name}, 原因: {reason}, 备注: {notes}")
     db.commit()
     if project.parent_project_id:
         recalc_multi_lot_parent_status(project.parent_project_id, db)

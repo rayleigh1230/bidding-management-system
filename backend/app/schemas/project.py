@@ -25,6 +25,7 @@ class ProjectUpdate(BaseModel):
     manager_ids: Optional[list[int]] = None
     description: Optional[str] = None
     abandon_reason: Optional[str] = None
+    abandon_notes: Optional[str] = None
     parent_project_id: Optional[int] = None
     # Section 2: 招标信息
     agency_id: Optional[int] = None
@@ -85,6 +86,7 @@ class ProjectResponse(BaseModel):
     status: str
     description: str
     abandon_reason: str
+    abandon_notes: str = ""
     parent_project_id: Optional[int] = None
     external_no: Optional[str] = None
     source: Optional[str] = None

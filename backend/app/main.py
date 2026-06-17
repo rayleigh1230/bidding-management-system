@@ -99,6 +99,14 @@ def on_startup():
             conn.commit()
         print("Migration: added source_url column to project_infos")
 
+    # Auto-migrate: add abandon_notes column to project_infos if not exists
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'abandon_notes' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN abandon_notes TEXT DEFAULT ''"))
+            conn.commit()
+        print("Migration: added abandon_notes column to project_infos")
+
     # Cleanup orphan scrape runs from previous unclean shutdown
     from sqlalchemy.orm import Session as _Session
     from .models.scrape import ScrapeRun as _ScrapeRun
@@ -162,6 +170,44 @@ def on_startup():
             db.add(our_org)
             db.commit()
             print(f"Default organization created: {our_company_name} (ID=1)")
+
+        # Upgrade 3 bid specialists' role to bid_specialist (idempotent)
+        from .models.user import UserRole as _UserRole
+        SPECIALIST_NAMES = ["倪敏", "刘阳莉", "施艳荷"]
+        specialists = db.query(User).filter(User.display_name.in_(SPECIALIST_NAMES)).all()
+        upgraded = 0
+        for u in specialists:
+            role_val = u.role.value if hasattr(u.role, 'value') else str(u.role)
+            if role_val != "bid_specialist":
+                u.role = _UserRole.bid_specialist
+                upgraded += 1
+        if upgraded:
+            db.commit()
+            print(f"Upgraded {upgraded} user(s) to bid_specialist role: {[u.display_name for u in specialists]}")
+
+        # Migrate existing abandoned projects: old free-text reason → abandon_notes, reason → 资质不符
+        from .models.project import ProjectInfo as _ProjectInfo, ProjectStatus as _ProjectStatus
+        abandoned = db.query(_ProjectInfo).filter(_ProjectInfo.status == _ProjectStatus.abandoned).all()
+        migrated = 0
+        for p in abandoned:
+            old_reason = (p.abandon_reason or "").strip()
+            # 已是标准选项则跳过（幂等）
+            if old_reason in ("资质不符", "价格太低", "") and (p.abandon_notes or "").strip():
+                # reason 已是选项且 notes 已有内容，认为已迁移
+                if old_reason in ("资质不符", "价格太低"):
+                    continue
+            if old_reason and old_reason not in ("资质不符", "价格太低"):
+                # 旧自由文本移到 notes，reason 设为默认选项"资质不符"
+                p.abandon_notes = old_reason
+                p.abandon_reason = "资质不符"
+                migrated += 1
+            elif not old_reason:
+                # reason 为空也归为"资质不符"
+                p.abandon_reason = "资质不符"
+                migrated += 1
+        if migrated:
+            db.commit()
+            print(f"Migrated {migrated} abandoned project(s): reason → 资质不符, old text → abandon_notes")
     finally:
         db.close()
 

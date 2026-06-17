@@ -9,6 +9,7 @@ from ..core.database import Base
 
 class UserRole(str, enum.Enum):
     admin = "admin"
+    bid_specialist = "bid_specialist"  # 投标专员（可触发抓取）
     user = "user"
 
 

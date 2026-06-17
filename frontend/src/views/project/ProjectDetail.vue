@@ -497,7 +497,8 @@
     <!-- 已放弃信息 -->
     <el-card v-if="isAbandoned && !isNew" style="margin-top: 16px">
       <template #header><span style="color: #E6A23C">已放弃</span></template>
-      <p style="color: #666; margin: 0">{{ project.abandon_reason }}</p>
+      <p style="color: #666; margin: 0">原因：{{ project.abandon_reason || '-' }}</p>
+      <p v-if="project.abandon_notes" style="color: #999; margin: 8px 0 0">备注：{{ project.abandon_notes }}</p>
     </el-card>
 
     <!-- 操作按钮 -->
@@ -509,7 +510,7 @@
           <el-button v-if="isFollowing" type="success" @click="handlePublish">已发公告</el-button>
           <el-button v-if="isPublished || isNotRegistered || isRegistered" type="warning" @click="handlePrepare">准备投标</el-button>
           <el-button v-if="isPreparing" type="primary" @click="handleSubmit">提交投标</el-button>
-          <el-button v-if="canAbandon" type="danger" @click="showAbandonDialog = true">放弃</el-button>
+          <el-button v-if="canAbandon" type="danger" @click="openAbandonDialog">放弃</el-button>
         </template>
       </template>
     </div>
@@ -543,7 +544,13 @@
     <el-dialog v-model="showAbandonDialog" title="放弃项目" width="400px">
       <el-form label-width="80px">
         <el-form-item label="放弃原因">
-          <el-input v-model="abandonReason" type="textarea" :rows="3" placeholder="请输入放弃原因" />
+          <el-radio-group v-model="abandonReason">
+            <el-radio value="资质不符">资质不符</el-radio>
+            <el-radio value="价格太低">价格太低</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="abandonNotes" type="textarea" :rows="3" placeholder="选填，补充说明" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -581,6 +588,7 @@ const router = useRouter()
 const saving = ref(false)
 const showAbandonDialog = ref(false)
 const abandonReason = ref('')
+const abandonNotes = ref('')
 const users = ref([])
 const orgMap = ref({})  // id -> { id, name }
 const parentProjectName = ref('')
@@ -627,6 +635,7 @@ async function saveCurrentLot() {
   const currentLotId = parseInt(activeLotTab.value)
   if (isNaN(currentLotId)) return
   try {
+    await ensureSpecialistBeforeSave()
     const data = collectSaveData()
     await updateProject(currentLotId, data)
   } catch { /* 静默忽略 */ }
@@ -1126,12 +1135,40 @@ watch(() => bidForm.value.has_deposit, (newVal) => {
   }
 })
 
-// 招标信息卡片首次可见时，投标专员默认为当前登录用户
-watch(showBidding, (visible) => {
-  if (visible && !biddingForm.value.bid_specialist_id && userStore.user?.id) {
-    biddingForm.value.bid_specialist_id = userStore.user.id
+// 根据用户 id 查显示名（投标专员确认弹窗用）
+function getUserNameById(id) {
+  if (!id) return ''
+  const u = users.value.find(x => x.id === id)
+  return u?.display_name || u?.username || ''
+}
+
+// 保存前确保投标专员：空则静默填当前用户；已是他人则弹窗确认是否更换。
+// 不依赖 showBidding —— 即使项目处于"跟进中"（招标卡片未显示），保存时也写入专员。
+async function ensureSpecialistBeforeSave() {
+  const uid = userStore.user?.id
+  if (!uid) return
+
+  const current = biddingForm.value.bid_specialist_id
+  if (current === uid) return
+
+  if (!current) {
+    biddingForm.value.bid_specialist_id = uid
+    return
   }
-})
+
+  const oldName = getUserNameById(current)
+  const newName = userStore.user.display_name || userStore.user.username
+  try {
+    await ElMessageBox.confirm(
+      `是否将投标专员由「${oldName}」更换为「${newName}」？`,
+      '更换投标专员',
+      { type: 'warning', confirmButtonText: '确认更换', cancelButtonText: '保持原专员' }
+    )
+    biddingForm.value.bid_specialist_id = uid
+  } catch {
+    // 用户取消 → 保留原专员，继续保存其他字段
+  }
+}
 
 // ---- Helpers ----
 function parseJson(val, fallback = []) {
@@ -1475,6 +1512,8 @@ function collectSaveData() {
     ...projectForm.value,
     region: JSON.stringify(projectForm.value.region),
     manager_ids: projectForm.value.manager_ids,
+    // 投标专员始终发送：即使招标卡片未显示（跟进中状态），保存时也要写入专员
+    bid_specialist_id: biddingForm.value.bid_specialist_id,
   }
   if (showBidding.value) {
     Object.assign(data, { ...biddingForm.value, tags: biddingForm.value.tags, bid_documents: bidDocuments.value })
@@ -1505,6 +1544,7 @@ async function handleSave() {
   }
   saving.value = true
   try {
+    await ensureSpecialistBeforeSave()
     const data = collectSaveData()
     if (isNew.value) {
       const created = await createProject(data)
@@ -1532,6 +1572,7 @@ async function handlePublish() {
   try {
     await ElMessageBox.confirm('确认已发布招标公告？将自动保存当前信息。', '确认')
     saving.value = true
+    await ensureSpecialistBeforeSave()
     const data = collectSaveData()
     await updateProject(currentProjectId.value, data)
     await publishProject(currentProjectId.value)
@@ -1548,6 +1589,7 @@ async function handlePrepare() {
   try {
     await ElMessageBox.confirm('确认准备投标？将自动保存当前信息。', '确认')
     saving.value = true
+    await ensureSpecialistBeforeSave()
     const data = collectSaveData()
     await updateProject(currentProjectId.value, data)
     await prepareProject(currentProjectId.value)
@@ -1564,6 +1606,7 @@ async function handleSubmit() {
   try {
     await ElMessageBox.confirm('确认提交投标？将自动保存当前信息。', '确认')
     saving.value = true
+    await ensureSpecialistBeforeSave()
     const data = collectSaveData()
     await updateProject(currentProjectId.value, data)
     await submitProject(currentProjectId.value)
@@ -1576,11 +1619,23 @@ async function handleSubmit() {
   }
 }
 
+function openAbandonDialog() {
+  abandonReason.value = ''
+  abandonNotes.value = ''
+  showAbandonDialog.value = true
+}
+
 async function handleAbandon() {
+  if (!abandonReason.value) {
+    ElMessage.warning('请选择放弃原因')
+    return
+  }
   try {
-    await abandonProject(currentProjectId.value, abandonReason.value)
+    await abandonProject(currentProjectId.value, abandonReason.value, abandonNotes.value)
     ElMessage.success('已放弃')
     showAbandonDialog.value = false
+    abandonReason.value = ''
+    abandonNotes.value = ''
     await loadProject()
   } catch (err) {
     ElMessage.error(err.response?.data?.detail || '操作失败')
@@ -1592,10 +1647,6 @@ onMounted(async () => {
   await loadProject()
   if (isMultiLotParent.value) {
     await loadLots()
-  }
-  // 新建项目时，投标专员默认为当前登录用户
-  if (isNew.value && userStore.user?.id && !biddingForm.value.bid_specialist_id) {
-    biddingForm.value.bid_specialist_id = userStore.user.id
   }
 })
 </script>

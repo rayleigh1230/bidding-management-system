@@ -1,6 +1,6 @@
 """招标信息抓取 API。
 
-POST   /api/scrape/run              触发抓取（管理员）
+POST   /api/scrape/run              触发抓取（管理员 / 投标专员）
 GET    /api/scrape/status/{run_id}  查询状态（轮询）
 GET    /api/scrape/runs             历史列表
 GET    /api/scrape/runs/{run_id}    单次详情（含 item_logs）
@@ -22,11 +22,11 @@ from ..services.scrape_runner import run_scraper
 router = APIRouter(prefix="/api/scrape", tags=["招标抓取"])
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """要求当前用户是管理员。"""
+def require_can_scrape(current_user: User = Depends(get_current_user)) -> User:
+    """允许管理员和投标专员触发抓取。"""
     role_val = current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role)
-    if role_val != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可执行此操作")
+    if role_val not in ("admin", "bid_specialist"):
+        raise HTTPException(status_code=403, detail="无抓取权限")
     return current_user
 
 
@@ -34,7 +34,7 @@ def require_admin(current_user: User = Depends(get_current_user)) -> User:
 def trigger_scrape(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_can_scrape),
 ):
     """触发一次抓取。立即返回 run_id，后台异步执行。"""
     existing = (
