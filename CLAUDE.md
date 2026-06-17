@@ -149,7 +149,7 @@ Flow endpoints only change the status field — no new records are created:
 - **Result announcement filter**: `scrapers/base.py:RESULT_KEYWORDS` + `is_result_announcement()` excludes 中标/成交/开标/结果/废标/流标/终止/合同 公告/公示/记录. All five scrapers call this in `normalize()` to keep only 招标公告.
 - **Keyword + region filter**: `scrapers/base.py:KEYWORDS` = [检测/人防/防雷/消防/勘察/测绘/监测/鉴定/评估/试验], OR match. `match_region_zhejiang()` checks title for 浙江 city names, or CCGP zoneId / GGZY infoc starting with 330. jhygcg/jhzjcs/jhggzy are inherently 金华市, skip region check.
 - **Site-specific fetch details**:
-  - **ggzy**: `categorynum=002001001` (招标公告, NOT 002001003 which is 中标候选人公示). `infoc=330` filters 浙江全省. source_url prepends `https://ggzy.zj.gov.cn` when API returns relative path starting with `/`.
+  - **ggzy**: `CATEGORIES` 配置 3 类业务相关公告：`002001001` 招标公告 + `002001002` 资格预审公告 + `002001011` 招标文件公示（不含中标结果类）。`infoc=33` 前缀匹配浙江全省（非 330）。**不传服务端 `titlenew` 关键词**（站点分词会漏抓），改为按当天日期 `time` 字段 + `rn=100` 翻页（最多 10 页兜底）1 次拿全部，本地 `normalize` 用 `match_keywords` 过滤。去重 by `rec.id`（比 url 稳定）。source_url 拼接 `https://ggzy.zj.gov.cn` + 相对路径。
   - **jhygcg**: Searches with `classID=21` (采购公告) but API mixes in classId=22 (成交候选人) and 24 (采购结果) — `normalize()` filters `classId != "21"` out. source_url uses `/detail?bulletinId={articleId}` (no `/home/` prefix).
   - **jhzjcs**: Direct API call to `getComparePublicList` with `selectedOptionId=6bbd9b33-ad3b-4c7a-a689-4365326f2626` (工程检验检测 category). `pageSize=200` to fetch all projects in one request. **No keyword/name filter** — all projects under this category are kept. source_url uses `comparison_public.html?id={guid}`.
   - **ccgp**: Uses scrapling with curl_cffi impersonation to bypass anti-bot. Zone `330` for 浙江.
