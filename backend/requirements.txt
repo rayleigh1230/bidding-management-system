@@ -15,3 +15,4 @@ scrapling>=0.2.0          # ccgp 站点（依赖 curl_cffi + browserforge）
 curl_cffi>=0.7.0
 browserforge>=1.2.0
 playwright>=1.40.0        # jhzjcs 站点，安装后需运行 playwright install chromium
+websocket-client>=1.6.0   # zcy 站点，连 CDP WebSocket 让 Chrome 自己 fetch

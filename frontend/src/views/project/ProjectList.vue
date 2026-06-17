@@ -316,7 +316,7 @@ const userStore = useUserStore()
 const STORAGE_PREFIX = 'project_list_columns'
 
 // 抓取站点数量（与后端 ScraperRegistry 注册数保持一致）
-const SCRAPE_SITE_COUNT = 5
+const SCRAPE_SITE_COUNT = 6
 
 // ---- 列配置 ----
 // 原则：只有 project_name 是弹性列（无固定 width），其余都用 width 固定
