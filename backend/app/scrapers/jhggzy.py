@@ -123,27 +123,54 @@ class JhggzyScraper(BaseScraper):
 
     @staticmethod
     def _parse_html_items(html_frag: str) -> list:
-        """解析 AJAX API 返回的 HTML 片段为 [{title, url, publish_date}, ...]。"""
+        """解析 AJAX API 返回的 HTML 片段为 [{title, url, publish_date}, ...]。
+        实际片段结构：
+          <a href="...art_<hex>.html" title="干净标题" target="_blank">
+            <span class="title">...</span>
+            <span class="lx">公告类型：xxx</span><span class="date">YYYY-MM-DD</span>
+          </a>
+        标题优先用 <a> 的 title 属性（已是干净标题），日期从 <span class="date"> 提取。
+        """
         if not html_frag:
             return []
         items = []
-        # 匹配 <a href="...art_<32hex>.html" ...>标题内容</a>
+        # 匹配整段 <a>，捕获 href / title 属性 / inner html
         pattern = re.compile(
+            r'<a[^>]+href="([^"]*?art_[a-f0-9]+\.html)"[^>]*?title="([^"]*)"[^>]*>(.*?)</a>',
+            re.DOTALL,
+        )
+        fallback_pattern = re.compile(
             r'<a[^>]+href="([^"]*?art_[a-f0-9]+\.html)"[^>]*>(.*?)</a>',
             re.DOTALL,
         )
+        matched_urls = set()
         for m in pattern.finditer(html_frag):
             url = m.group(1)
-            title_html = m.group(2)
-            # 剥 HTML 标签 + 规范化空白
-            title = re.sub(r"<[^>]+>", "", title_html)
+            title = (m.group(2) or "").strip()
+            inner = m.group(3) or ""
+            # 从 inner 里找 <span class="date">YYYY-MM-DD</span>
+            date_match = re.search(
+                r'<span[^>]*class="[^"]*date[^"]*"[^>]*>\s*(20\d{2}-\d{2}-\d{2})\s*</span>',
+                inner,
+            )
+            publish_date = date_match.group(1) if date_match else None
+            if title and url:
+                matched_urls.add(url)
+                items.append({
+                    "title": title,
+                    "url": url,
+                    "publish_date": publish_date,
+                })
+        # 兜底：处理没有 title 属性的旧格式条目
+        for m in fallback_pattern.finditer(html_frag):
+            url = m.group(1)
+            if url in matched_urls:
+                continue
+            inner = m.group(2) or ""
+            title = re.sub(r"<[^>]+>", "", inner)
             title = re.sub(r"\s+", " ", title).strip()
-            # 去掉混在标题里的「公告类型：xxx」前缀（保留纯标题）
-            title = re.sub(r"\s*公告类型：\S+\s*", " ", title).strip()
-            # 提取发布日期（标题尾部或紧随其后的文本含 YYYY-MM-DD）
             date_match = re.search(r"(20\d{2}-\d{2}-\d{2})", title)
             publish_date = date_match.group(1) if date_match else None
-            # 把日期从标题末尾去掉，得到纯标题
             if date_match:
                 title = title[:date_match.start()].strip()
             if title and url:
