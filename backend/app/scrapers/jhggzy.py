@@ -89,7 +89,37 @@ class JhggzyScraper(BaseScraper):
         - 顶级栏目 (/col/col<colId>/index.html): pageId = colId
         - 子路径栏目 (/col/col<parent>/<sub>/index.html): fetch 静态页解析 querydata
         """
-        raise NotImplementedError("Task 2 实现")
+        if page_url in self._page_id_cache:
+            return self._page_id_cache[page_url]
+
+        # 顶级栏目：URL 形如 /col/col<colId>/index.html，pageId 直接 = colId
+        m = re.match(r"^/col/col(\d+)/index\.html$", page_url)
+        if m:
+            page_id = m.group(1)
+            self._page_id_cache[page_url] = page_id
+            return page_id
+
+        # 子路径栏目：fetch 静态页，从 querydata 里解析哈希 pageId
+        try:
+            resp = requests.get(
+                BASE_URL + page_url, headers=HEADERS,
+                timeout=self.REQUEST_TIMEOUT, verify=False,
+            )
+            resp.raise_for_status()
+            html = resp.text
+            qd_match = re.search(r"querydata=\"([^\"]+)\"", html)
+            if not qd_match:
+                logger.warning(f"jhggzy 未在 {page_url} 找到 querydata")
+                return None
+            qd_str = qd_match.group(1).replace("'", '"')
+            qd = json.loads(qd_str)
+            page_id = qd.get("pageId")
+            if page_id:
+                self._page_id_cache[page_url] = str(page_id)
+            return str(page_id) if page_id else None
+        except Exception as e:
+            logger.warning(f"jhggzy 解析 pageId 失败 {page_url}: {e}")
+            return None
 
     @staticmethod
     def _parse_html_items(html_frag: str) -> list:
