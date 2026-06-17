@@ -12,6 +12,11 @@
       <el-button :type="activeStatus === '已中标' ? 'success' : ''" @click="setStatus('已中标')">已中标</el-button>
       <el-button :type="activeStatus === '未中标' ? 'danger' : ''" @click="setStatus('未中标')">未中标</el-button>
       <el-button :type="activeStatus === '已流标' ? 'warning' : ''" @click="setStatus('已流标')">已流标</el-button>
+      <el-button
+        v-if="userStore.user?.role === 'bid_specialist'"
+        :type="myProjects ? 'warning' : ''"
+        @click="toggleMyProjects"
+      >我的项目</el-button>
     </div>
 
     <div style="display: flex; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px">
@@ -55,7 +60,7 @@
         </el-popover>
         <el-button type="primary" @click="$router.push('/projects/new')"><el-icon><Plus /></el-icon> 新增项目</el-button>
         <el-button
-          v-if="userStore.user?.role === 'admin'"
+          v-if="['admin', 'bid_specialist'].includes(userStore.user?.role)"
           type="success"
           :loading="scrapeState.running"
           @click="handleScrape"
@@ -310,6 +315,9 @@ const userStore = useUserStore()
 
 const STORAGE_PREFIX = 'project_list_columns'
 
+// 抓取站点数量（与后端 ScraperRegistry 注册数保持一致）
+const SCRAPE_SITE_COUNT = 5
+
 // ---- 列配置 ----
 // 原则：只有 project_name 是弹性列（无固定 width），其余都用 width 固定
 // 表格总宽 = 容器宽度，project_name 自动伸缩填充剩余空间
@@ -343,7 +351,8 @@ const configurableColumns = computed(() => allColumns.filter(c => !c.alwaysShow)
 const defaultKeys = allColumns.filter(c => c.defaultShow).map(c => c.key)
 
 function getStorageKey() {
-  return `${STORAGE_PREFIX}_${activeStatus.value || 'all'}`
+  const uid = userStore.user?.id || 'guest'
+  return `${STORAGE_PREFIX}_${uid}_${activeStatus.value || 'all'}`
 }
 
 function loadColumnConfig() {
@@ -383,6 +392,13 @@ const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const activeStatus = ref('')
+const myProjects = ref(false)  // "我的项目"快捷筛选：投标专员=当前用户 OR 未指派
+
+function toggleMyProjects() {
+  myProjects.value = !myProjects.value
+  page.value = 1
+  loadData()
+}
 
 const filters = reactive({
   keyword: '', status: '', bidding_type: '',
@@ -555,6 +571,12 @@ async function loadData() {
     if (filters.budget_max != null) params.budget_max = filters.budget_max
     if (filters.winning_amount_min != null) params.winning_amount_min = filters.winning_amount_min
     if (filters.winning_amount_max != null) params.winning_amount_max = filters.winning_amount_max
+    // "我的项目"快捷筛选：专员=当前用户 OR 未指派，排除已放弃
+    if (myProjects.value && userStore.user?.id) {
+      params.bid_specialist_id = userStore.user.id
+      params.include_unassigned_specialist = true
+      params.exclude_abandoned = true
+    }
 
     saveAdvancedState()
     const res = await getProjects(params)
@@ -615,7 +637,7 @@ const scrapeResultSub = computed(() => {
 async function handleScrape() {
   try {
     await ElMessageBox.confirm(
-      '将抓取 4 个站点今日新增的招标公告，预计 1-2 分钟。\n\n抓取到的项目会自动入库（初始状态：跟进中），可在列表中查看。',
+      `将抓取 ${SCRAPE_SITE_COUNT} 个站点今日新增的招标公告，预计 1-2 分钟。\n\n抓取到的项目会自动入库（初始状态：跟进中），可在列表中查看。`,
       '确认抓取',
       { confirmButtonText: '开始抓取', cancelButtonText: '取消', type: 'info' }
     )
@@ -654,7 +676,7 @@ function pollScrapeStatus() {
       const sites = data.sites_summary || {}
       const errors = data.error_summary || {}
       const doneSites = Object.keys(sites).length + Object.keys(errors).length
-      scrapeState.percentage = Math.min(95, Math.round((doneSites / 4) * 100))
+      scrapeState.percentage = Math.min(95, Math.round((doneSites / SCRAPE_SITE_COUNT) * 100))
 
       if (data.status !== 'running') {
         clearInterval(scrapeState.pollTimer)
