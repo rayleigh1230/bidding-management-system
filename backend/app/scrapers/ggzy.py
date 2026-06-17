@@ -1,6 +1,12 @@
 """浙江省公共资源交易平台 — requests POST JSON API（带 WAF 绕过）。
 站点 URL: https://ggzy.zj.gov.cn
-分类号 002001001 = 招标公告；地区 infoc=330 = 浙江全省。
+覆盖 3 类业务相关公告：
+  - 002001001 招标公告
+  - 002001002 资格预审公告
+  - 002001011 招标文件公示
+地区 infoc=33 = 浙江全省（前缀匹配 33 开头的 6 位地区代码）。
+不传服务端 titlenew 关键词过滤（站点分词会漏抓），改为 1 次按日期拿全部，
+本地 normalize 用 match_keywords 过滤。
 """
 import logging
 from datetime import date
@@ -25,7 +31,15 @@ HEADERS = {
     "Origin": "https://ggzy.zj.gov.cn",
 }
 
-SEARCH_KEYWORDS = ["检测", "人防", "防雷", "消防", "勘察", "测绘", "监测", "鉴定", "评估", "试验"]
+# 业务相关公告类型（招标前/招标中，不含中标结果类）
+CATEGORIES = [
+    ("002001001", "招标公告"),
+    ("002001002", "资格预审公告"),
+    ("002001011", "招标文件公示"),
+]
+
+PAGE_SIZE = 100
+MAX_PAGES = 10  # 单类型最多翻 10 页 = 1000 条兜底
 
 
 class GgzyScraper(BaseScraper):
@@ -33,7 +47,7 @@ class GgzyScraper(BaseScraper):
     requires_playwright = False
 
     def fetch(self, day: date) -> list[dict]:
-        """逐关键词搜索招标公告，合并去重。"""
+        """遍历 3 类公告，每类按当天日期翻页拿全部，合并去重。"""
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -48,41 +62,51 @@ class GgzyScraper(BaseScraper):
         date_end = f"{day.strftime('%Y-%m-%d')} 23:59:59"
 
         results = []
-        seen_urls = set()
+        seen_ids = set()
 
-        for kw in SEARCH_KEYWORDS:
-            payload = {
-                "token": "", "pn": 0, "rn": 20, "wd": "",
-                "fields": "title", "cnum": "001",
-                "sort": '{"webdate":"0"}', "cl": 200,
-                "condition": [
-                    {"fieldName": "categorynum", "isLike": True, "likeType": 2, "equal": "002001001"},
-                    {"fieldName": "infoc", "isLike": True, "likeType": 2, "equal": "330"},
-                    {"fieldName": "titlenew", "isLike": True, "likeType": 0, "equal": kw},
-                ],
-                "time": [{"fieldName": "webdate", "startTime": date_start, "endTime": date_end}],
-                "isBusiness": "1", "noParticiple": "1", "accuracy": "",
-                "highlights": "", "statistics": None, "unionCondition": None,
-                "inc_wd": "", "exc_wd": "", "ssort": "title", "terminal": "",
-                "searchRange": None,
-            }
-            try:
-                resp = session.post(
-                    API_URL, json=payload,
-                    timeout=self.REQUEST_TIMEOUT, verify=False,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                records = data.get("result", {}).get("records", []) or []
-                for rec in records:
-                    url = rec.get("url") or rec.get("linkurl") or ""
-                    if url and url not in seen_urls:
-                        seen_urls.add(url)
-                        rec["_keyword"] = kw
-                        results.append(rec)
-            except Exception as e:
-                logger.warning(f"ggzy 关键词 '{kw}' 搜索失败: {e}")
-                continue
+        for cat_num, cat_name in CATEGORIES:
+            for page_idx in range(MAX_PAGES):
+                pn = page_idx * PAGE_SIZE
+                payload = {
+                    "token": "", "pn": pn, "rn": PAGE_SIZE, "wd": "",
+                    "fields": "title", "cnum": "001",
+                    "sort": '{"webdate":"0"}', "cl": 200,
+                    "condition": [
+                        {"fieldName": "categorynum", "isLike": True, "likeType": 2, "equal": cat_num},
+                        {"fieldName": "infoc", "isLike": True, "likeType": 2, "equal": "33"},
+                    ],
+                    "time": [{"fieldName": "webdate", "startTime": date_start, "endTime": date_end}],
+                    "isBusiness": "1", "noParticiple": "0", "accuracy": "",
+                    "highlights": "", "statistics": None, "unionCondition": None,
+                    "inc_wd": "", "exc_wd": "", "ssort": "title", "terminal": "",
+                    "searchRange": None,
+                }
+                try:
+                    resp = session.post(
+                        API_URL, json=payload,
+                        timeout=self.REQUEST_TIMEOUT, verify=False,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    records = data.get("result", {}).get("records", []) or []
+                    if not records:
+                        break
+                    new_added = 0
+                    for rec in records:
+                        rid = rec.get("id") or rec.get("infoid") or rec.get("linkurl") or ""
+                        if rid and rid not in seen_ids:
+                            seen_ids.add(rid)
+                            rec["_category"] = cat_name
+                            results.append(rec)
+                            new_added += 1
+                    # 不足一页说明已到末尾
+                    if len(records) < PAGE_SIZE:
+                        break
+                except Exception as e:
+                    logger.warning(f"ggzy {cat_name} 第 {page_idx+1} 页抓取失败: {e}")
+                    break
+            if results:
+                logger.info(f"ggzy {cat_name}: 累计 {len(results)} 条")
 
         return results
 
@@ -90,9 +114,9 @@ class GgzyScraper(BaseScraper):
         title = (raw.get("title") or "").strip()
         if not title:
             return None
-        if not match_keywords(title):
-            return None
         if is_result_announcement(title):
+            return None
+        if not match_keywords(title):
             return None
 
         region_text = raw.get("infod") or ""
@@ -106,6 +130,8 @@ class GgzyScraper(BaseScraper):
         if source_url and source_url.startswith("/"):
             source_url = "https://ggzy.zj.gov.cn" + source_url
 
+        category = raw.get("_category", "")
+
         return ScrapeItem(
             project_name=title,
             bidding_type="公开招标",
@@ -113,5 +139,5 @@ class GgzyScraper(BaseScraper):
             region=region,
             source_url=source_url,
             publish_date=publish_date,
-            description=f"来源: ggzy.zj.gov.cn\n地区: {region_text}\n关键词: {raw.get('_keyword','')}\n原始链接: {source_url or ''}",
+            description=f"来源: ggzy.zj.gov.cn\n类别: {category}\n地区: {region_text}\n原始链接: {source_url or ''}",
         )
