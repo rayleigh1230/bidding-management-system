@@ -8,7 +8,7 @@
 注：各领域的公告类型体系不同，不能统一套同一组类型代码。
 地区 infoc=33 = 浙江全省（前缀匹配 33 开头的 6 位地区代码）。
 不传服务端 titlenew 关键词过滤（站点分词会漏抓），改为 1 次按日期拿全部，
-本地 normalize 用 match_keywords + is_result_announcement 过滤。
+本地 normalize 用 is_result_announcement 过滤（关键词过滤上移到 scrape_runner）。
 """
 import logging
 from datetime import date
@@ -17,7 +17,7 @@ from typing import Optional
 import requests
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, parse_date_safe,
+    BaseScraper, ScrapeItem, is_result_announcement, parse_date_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,8 +125,6 @@ class GgzyScraper(BaseScraper):
         if not title:
             return None
         if is_result_announcement(title):
-            return None
-        if not match_keywords(title):
             return None
 
         region_text = raw.get("infod") or ""

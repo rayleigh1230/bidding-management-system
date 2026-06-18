@@ -12,6 +12,7 @@
       <el-button :type="activeStatus === '已中标' ? 'success' : ''" @click="setStatus('已中标')">已中标</el-button>
       <el-button :type="activeStatus === '未中标' ? 'danger' : ''" @click="setStatus('未中标')">未中标</el-button>
       <el-button :type="activeStatus === '已流标' ? 'warning' : ''" @click="setStatus('已流标')">已流标</el-button>
+      <el-button :type="activeStatus === '已放弃' ? 'info' : ''" @click="setStatus('已放弃')">已放弃</el-button>
       <el-button
         v-if="userStore.user?.role === 'bid_specialist'"
         :type="myProjects ? 'warning' : ''"
@@ -158,7 +159,7 @@
             <el-table v-if="row.lots && row.lots.length" :data="row.lots" size="small" border>
               <el-table-column label="标段名称" min-width="100">
                 <template #default="{ row: lot }">
-                  <el-link type="primary" @click="$router.push(`/projects/${lot.id}`)">{{ lot.project_name }}</el-link>
+                  <el-link type="primary" @click="goToDetail(lot.id)">{{ lot.project_name }}</el-link>
                 </template>
               </el-table-column>
               <el-table-column label="状态" width="80">
@@ -177,7 +178,7 @@
               </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ row: lot }">
-                  <el-button link type="primary" size="small" @click="$router.push(`/projects/${lot.id}`)">查看</el-button>
+                  <el-button link type="primary" size="small" @click="goToDetail(lot.id)">查看</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -191,7 +192,7 @@
         <!-- 项目名称（唯一弹性列） -->
         <el-table-column v-else-if="col.key === 'project_name'" prop="project_name" label="项目名称" min-width="100" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-link type="primary" @click="$router.push(`/projects/${row.id}`)">{{ row.project_name }}</el-link>
+            <el-link type="primary" @click="goToDetail(row.id)">{{ row.project_name }}</el-link>
             <el-tag v-if="row.is_multi_lot" size="small" type="warning" style="margin-left: 4px">多标段</el-tag>
           </template>
         </el-table-column>
@@ -249,7 +250,7 @@
         <!-- 操作 -->
         <el-table-column v-else-if="col.key === 'actions'" label="操作" width="100">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="$router.push(`/projects/${row.id}`)">查看</el-button>
+            <el-button link type="primary" size="small" @click="goToDetail(row.id)">查看</el-button>
             <el-popconfirm title="确定删除？" @confirm="handleDelete(row.id)">
               <template #reference>
                 <el-button link type="danger" size="small">删除</el-button>
@@ -300,7 +301,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Setting, ArrowDown, ArrowUp, Download } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, getProjectLots } from '../../api/project'
@@ -312,6 +314,27 @@ import PlatformSelector from '../../components/PlatformSelector.vue'
 import OrgSelector from '../../components/OrgSelector.vue'
 
 const userStore = useUserStore()
+const router = useRouter()
+
+const PROJECT_LIST_PAGE_KEY = 'projectListPage'
+
+// 保存列表状态（页码 + 快捷筛选），从详情返回时恢复；侧边栏点击会清除
+function saveListState() {
+  sessionStorage.setItem(PROJECT_LIST_PAGE_KEY, JSON.stringify({
+    page: page.value,
+    activeStatus: activeStatus.value,
+    keyword: filters.keyword,
+    bidding_type: filters.bidding_type,
+    myProjects: myProjects.value,
+  }))
+}
+
+function consumeListState() {
+  const raw = sessionStorage.getItem(PROJECT_LIST_PAGE_KEY)
+  if (!raw) return null
+  sessionStorage.removeItem(PROJECT_LIST_PAGE_KEY)
+  try { return JSON.parse(raw) } catch { return null }
+}
 
 const STORAGE_PREFIX = 'project_list_columns'
 
@@ -350,28 +373,28 @@ const configurableColumns = computed(() => allColumns.filter(c => !c.alwaysShow)
 
 const defaultKeys = allColumns.filter(c => c.defaultShow).map(c => c.key)
 
-function getStorageKey() {
+function getStorageKey(status) {
   const uid = userStore.user?.id || 'guest'
-  return `${STORAGE_PREFIX}_${uid}_${activeStatus.value || 'all'}`
+  return `${STORAGE_PREFIX}_${uid}_${status || 'all'}`
 }
 
-function loadColumnConfig() {
+function loadColumnConfig(status) {
   try {
-    const saved = localStorage.getItem(getStorageKey())
+    const saved = localStorage.getItem(getStorageKey(status))
     if (saved) return JSON.parse(saved)
   } catch { /* ignore */ }
   return [...defaultKeys]
 }
 
-const selectedColumnKeys = ref(loadColumnConfig())
+const selectedColumnKeys = ref(loadColumnConfig(''))
 
-function saveColumnConfig(keys) {
-  localStorage.setItem(getStorageKey(), JSON.stringify(keys))
+function saveColumnConfig(status, keys) {
+  localStorage.setItem(getStorageKey(status), JSON.stringify(keys))
 }
 
 // 用 watch 确保任何变化都保存（比 @change 更可靠）
 watch(selectedColumnKeys, (newKeys) => {
-  saveColumnConfig(newKeys)
+  saveColumnConfig(activeStatus.value, newKeys)
 }, { deep: true })
 
 function resetColumns() {
@@ -389,10 +412,16 @@ const visibleColumns = computed(() => {
 const tableData = ref([])
 const loading = ref(false)
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(15)
 const total = ref(0)
 const activeStatus = ref('')
 const myProjects = ref(false)  // "我的项目"快捷筛选：投标专员=当前用户 OR 未指派
+
+// 进入项目详情前保存当前页码 + 筛选状态，返回时恢复；点侧边栏会清除
+function goToDetail(id) {
+  saveListState()
+  router.push(`/projects/${id}`)
+}
 
 function toggleMyProjects() {
   myProjects.value = !myProjects.value
@@ -541,7 +570,7 @@ function setStatus(status) {
   activeStatus.value = status
   filters.status = status
   page.value = 1
-  selectedColumnKeys.value = loadColumnConfig()
+  selectedColumnKeys.value = loadColumnConfig(status)
   loadData()
 }
 
@@ -553,6 +582,8 @@ async function loadData() {
     if (filters.keyword) { params.keyword = filters.keyword; params.keyword_match = keywordMatch.value }
     if (filters.status) params.status = filters.status
     if (filters.bidding_type) params.bidding_type = filters.bidding_type
+    // "全部"（无状态筛选）时排除已放弃项目，已放弃项目单独看
+    if (!filters.status) params.exclude_abandoned = true
     // 高级筛选
     if (filters.region && filters.region.length > 0) {
       params.region = filters.region[filters.region.length - 1]
@@ -736,8 +767,22 @@ onMounted(() => {
       bidDeadlineDateRange.value = [saved.bid_deadline_after, saved.bid_deadline_before]
     }
   }
-  _initialized = true
+  _initialized = false  // 保持 false 直到 nextTick，避免高级筛选恢复触发 watch 重置页码
+  // 从详情返回时恢复筛选状态（侧边栏点击已由 Layout 清除 sessionStorage）
+  const savedState = consumeListState()
+  if (savedState) {
+    page.value = savedState.page || 1
+    activeStatus.value = savedState.activeStatus || ''
+    filters.status = savedState.activeStatus || ''
+    filters.keyword = savedState.keyword || ''
+    filters.bidding_type = savedState.bidding_type || ''
+    myProjects.value = savedState.myProjects || false
+    // activeStatus 变了，列配置的 storage key 也变了，需要重新加载
+    selectedColumnKeys.value = loadColumnConfig(activeStatus.value)
+  }
   loadData()
+  // 延迟到 nextTick 开启 watch，让本轮筛选恢复触发的 watch 被跳过（不重置页码）
+  nextTick(() => { _initialized = true })
 })
 
 watch(showAdvanced, (val) => {

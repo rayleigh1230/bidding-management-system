@@ -10,6 +10,7 @@ import requests
 
 from .base import (
     BaseScraper, ScrapeItem, is_result_announcement, parse_date_safe,
+    extract_region_from_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,13 +83,15 @@ class JhzjcsScraper(BaseScraper):
 
         guid = raw.get("guid") or raw.get("projectguid") or ""
         source_url = f"{PAGE_URL}?id={guid}" if guid else PAGE_URL
+        # 站点本身是金华市，优先从标题提取县区颗粒度，否则回退金华市
+        region = extract_region_from_text(title) or '["浙江省","金华市"]'
 
         return ScrapeItem(
             project_name=title,
             bidding_type="中介超市",
             bidding_unit_name=dept_name,
             publish_platform_name="金华中介超市",
-            region='["浙江省","金华市"]',
+            region=region,
             external_no=guid or None,
             source_url=source_url,
             publish_date=publish_date,

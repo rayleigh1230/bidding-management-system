@@ -7,7 +7,8 @@ from datetime import date
 from typing import Optional
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, match_region_zhejiang,
+    BaseScraper, ScrapeItem, is_result_announcement, match_region_zhejiang,
+    extract_region_from_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,6 @@ class CcgpScraper(BaseScraper):
         title = (raw.get("title") or "").strip()
         if not title:
             return None
-        if not match_keywords(title):
-            return None
         if is_result_announcement(title):
             return None
 
@@ -69,11 +68,14 @@ class CcgpScraper(BaseScraper):
         if not match_region_zhejiang(title):
             return None
 
+        # 从标题提取市/县区，提取不到就留空（不再硬编码 浙江省）
+        region = extract_region_from_text(title)
+
         return ScrapeItem(
             project_name=title,
             bidding_type="公开招标",
             publish_platform_name="中国政府采购网",
-            region='["浙江省"]',
+            region=region,
             source_url=source_url,
             publish_date=None,
             description=f"来源: ccgp.gov.cn\n关键词: {raw.get('_keyword','')}\n原始链接: {source_url or ''}",

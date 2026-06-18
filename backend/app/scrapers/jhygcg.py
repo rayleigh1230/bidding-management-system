@@ -9,7 +9,8 @@ from typing import Optional
 import requests
 
 from .base import (
-    BaseScraper, ScrapeItem, match_keywords, is_result_announcement, parse_date_safe,
+    BaseScraper, ScrapeItem, is_result_announcement, parse_date_safe,
+    extract_region_from_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,15 +80,14 @@ class JhygcgScraper(BaseScraper):
         class_id = str(raw.get("classId", ""))
         if class_id and class_id != "21":
             return None
-        if not match_keywords(title):
-            return None
         if is_result_announcement(title):
             return None
 
         publish_date = parse_date_safe(raw.get("publishDate"))
         article_id = raw.get("articleId", "")
         external_no = raw.get("prjNo") or article_id or None
-        region = '["浙江省","金华市"]'
+        # 站点本身是金华市，优先从标题提取县区颗粒度，否则回退金华市
+        region = extract_region_from_text(title) or '["浙江省","金华市"]'
         source_url = f"https://www.jhygcg.com/detail?bulletinId={article_id}" if article_id else None
 
         return ScrapeItem(

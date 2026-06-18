@@ -26,6 +26,7 @@ verify.json
 # Local DB backups, one-off scripts, tooling state
 backend/migrate_db.py
 .superpowers/
+detail_resp.txt
 
 # Playwright MCP browser artifacts (traces, screenshots)
 .playwright-mcp/

@@ -10,7 +10,7 @@
           background-color="#304156"
           text-color="#bfcbd9"
           active-text-color="#409eff"
-          router
+          @select="handleMenuSelect"
         >
           <el-menu-item index="/dashboard">
             <el-icon><DataBoard /></el-icon>
@@ -103,5 +103,14 @@ const currentTitle = computed(() => route.meta.title || '招标管理系统')
 function handleLogout() {
   userStore.logout()
   router.push('/login')
+}
+
+function handleMenuSelect(index) {
+  // 点击侧边栏"项目管理"时清除保存的页码，让列表回到第 1 页
+  // 这样从详情返回（浏览器后退）会保留页码，而点侧边栏会回到第 1 页
+  if (index === '/projects') {
+    sessionStorage.removeItem('projectListPage')
+  }
+  router.push(index)
 }
 </script>

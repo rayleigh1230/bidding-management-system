@@ -1,18 +1,32 @@
-"""抓取主流程：遍历所有 scraper → 去重 → 创建项目 → 记日志。"""
+"""抓取主流程：遍历所有 scraper → 关键词分类 → LLM 灰度精筛 → 去重 → 创建项目。
+
+三阶段流水线（站点级批量并发）：
+  阶段 1：normalize + is_result_announcement 过滤 + 关键词三态分类（串行）
+            white → 入 white_items
+            grey  → 入 grey_items（等阶段 2 LLM 精筛）
+            reject → 直接 skipped 记日志
+  阶段 2：grey_items 批量并发调 LLM（ThreadPoolExecutor）
+            ENABLE_LLM_FILTER=false → grey 全部 reject
+            LLM 单条异常 → fallback 为 white（保留）
+  阶段 3：white_items + grey 通过项 → 去重 + 入库（串行）
+"""
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 
-from sqlalchemy.orm import Session
-
+from ..core.config import settings
 from ..core.database import SessionLocal
 from ..models.project import ProjectInfo, ProjectStatus
 from ..models.scrape import ScrapeRun, ScrapeItemLog
 from ..models.user import User
 from ..scrapers import ScraperRegistry
-from ..scrapers.base import ScrapeItem, SiteFetchError
+from ..scrapers.base import ScrapeItem, SiteFetchError, classify_by_keyword
 from .org_matcher import match_or_create_org, match_or_create_platform
 
 logger = logging.getLogger(__name__)
+
+# 这类 scraper 整分类抓取、不经关键词/LLM 筛选（中介超市等）
+SKIP_CLASSIFY_SCRAPERS = {"jhzjcs"}
 
 
 def run_scraper(run_id: int, user_id: int):
@@ -38,8 +52,23 @@ def run_scraper(run_id: int, user_id: int):
                 site_stat["fetched"] = len(raw_list)
                 logger.info(f"[{scraper.name}] 抓取到 {len(raw_list)} 条")
 
+                skip_classify = scraper.name in SKIP_CLASSIFY_SCRAPERS
+
+                # 阶段 1：normalize + 关键词分类
+                white_items: list[ScrapeItem] = []
+                grey_items: list[ScrapeItem] = []
                 for raw in raw_list:
-                    _try_process_one(db, run, scraper, raw, site_stat, current_user)
+                    _classify_one(
+                        db, run, scraper, raw, site_stat,
+                        skip_classify, white_items, grey_items,
+                    )
+
+                # 阶段 2：grey 批量 LLM 精筛
+                _process_grey_batch(db, run, scraper, site_stat, grey_items)
+
+                # 阶段 3：入库（white + LLM 通过的 grey）
+                for item in white_items + grey_items:
+                    _create_one(db, run, scraper, site_stat, current_user, item)
 
                 run.sites_summary = {**(run.sites_summary or {}), scraper.name: site_stat}
                 db.commit()
@@ -65,8 +94,15 @@ def run_scraper(run_id: int, user_id: int):
         db.close()
 
 
-def _try_process_one(db, run, scraper, raw, site_stat, current_user):
-    """处理单条 raw 公告。"""
+# === 阶段 1：normalize + 关键词分类 ===
+
+def _classify_one(
+    db, run, scraper, raw, site_stat,
+    skip_classify: bool,
+    white_items: list, grey_items: list,
+):
+    """单条 raw：normalize → 关键词分类。
+    skip_classify=True 时（如中介超市）直接走 white_items，不经关键词/LLM。"""
     try:
         item = scraper.normalize(raw)
     except Exception as e:
@@ -76,8 +112,91 @@ def _try_process_one(db, run, scraper, raw, site_stat, current_user):
         return
 
     if item is None:
-        return  # 被关键词/地区过滤
+        return  # normalize 内部过滤（is_result_announcement / region 等）
 
+    if skip_classify:
+        white_items.append(item)
+        return
+
+    decision = classify_by_keyword(item.project_name)
+    if decision == "white":
+        white_items.append(item)
+    elif decision == "grey":
+        grey_items.append(item)
+    else:  # reject
+        _log_item(
+            db, run, item, scraper.name, "skipped",
+            skip_reason="关键词拒绝（黑名单/不命中业务词）",
+        )
+        site_stat["skipped"] += 1
+        run.skipped_count += 1
+        run.total_count += 1
+
+
+# === 阶段 2：grey 批量 LLM 精筛 ===
+
+def _process_grey_batch(db, run, scraper, site_stat, grey_items: list):
+    """grey_items 批量并发 LLM 分类。
+    ENABLE_LLM_FILTER=false → 全部 reject；LLM 异常单条 fallback 为 white。"""
+    if not grey_items:
+        return
+
+    if not settings.ENABLE_LLM_FILTER:
+        for item in grey_items:
+            _log_item(
+                db, run, item, scraper.name, "skipped",
+                skip_reason="灰度拒绝（LLM 筛选已关闭）",
+            )
+            site_stat["skipped"] += 1
+            run.skipped_count += 1
+            run.total_count += 1
+        grey_items.clear()
+        return
+
+    try:
+        classifier = get_classifier()
+    except Exception as e:
+        # 分类器初始化失败（如未配 API key）：全部按 white fallback（宁多抓不漏抓）
+        logger.warning(f"[{scraper.name}] LLM 分类器初始化失败，grey 全部 fallback=white: {e}")
+        return
+
+    def _one(item: ScrapeItem):
+        try:
+            decision, reason = classifier.classify(
+                title=item.project_name,
+                context=item.description or "",
+                external_no=item.external_no,
+            )
+            return item, (decision, reason)
+        except Exception as e:
+            # 单条异常 fallback 为 white（保留）
+            logger.warning(f"LLM 单条异常 fallback=white: {e}")
+            return item, ("white", f"LLM 异常 fallback: {type(e).__name__}")
+
+    concurrency = max(1, settings.LLM_CONCURRENCY)
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        results = list(pool.map(_one, grey_items))
+
+    passed: list[ScrapeItem] = []
+    for item, (decision, reason) in results:
+        if decision == "white":
+            passed.append(item)
+        else:
+            _log_item(
+                db, run, item, scraper.name, "skipped",
+                skip_reason=f"LLM 拒绝: {reason}",
+            )
+            site_stat["skipped"] += 1
+            run.skipped_count += 1
+            run.total_count += 1
+
+    grey_items.clear()
+    grey_items.extend(passed)
+
+
+# === 阶段 3：去重 + 入库 ===
+
+def _create_one(db, run, scraper, site_stat, current_user, item: ScrapeItem):
     try:
         created = _process_item(db, run, item, scraper.name, current_user)
         if created:
@@ -211,9 +330,15 @@ def _record_failure(db, run, source: str, item_or_raw, error_message: str):
 def _derive_run_status(run: ScrapeRun) -> str:
     """根据 error_summary 推导最终状态。"""
     site_failures = {k: v for k, v in (run.error_summary or {}).items() if k != "system"}
-    total_sites = 4
+    total_sites = 6  # ccgp / ggzy / jhygcg / jhzjcs / jhggzy / zcy
     if len(site_failures) >= total_sites:
         return "failed"
     if len(site_failures) > 0:
         return "partial"
     return "success"
+
+
+# 延迟导入避免循环依赖（classifier 依赖 settings，本模块也依赖 settings）
+def get_classifier():
+    from .classifier import get_classifier as _get
+    return _get()

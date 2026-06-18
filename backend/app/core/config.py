@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     QWEN_LONG_MODEL: str = "qwen-long"
     QWEN_LONG_TIMEOUT: int = 180
 
+    # 抓取项目筛选 LLM 分类器
+    QWEN_CLASSIFIER_MODEL: str = "qwen-plus"   # 纯文本分类，plus 推理更准确
+    ENABLE_LLM_FILTER: bool = True              # 灰度 case 是否调 LLM 精筛
+    LLM_CONCURRENCY: int = 10                    # LLM 批量分类并发数
+
     # 文件上传
     UPLOAD_DIR: str = str(BASE_DIR / "uploads")
     UPLOAD_MAX_SIZE: int = 20 * 1024 * 1024

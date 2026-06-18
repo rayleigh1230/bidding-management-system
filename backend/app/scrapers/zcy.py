@@ -1,7 +1,7 @@
 """政采云（浙江企业采购信息服务网）scraper。
 
 站点 URL: https://b.zhengcaiyun.cn
-列表 API: POST https://b.zhengcaiyun.cn/portal/category
+列表 API: POST https://b.zhengcaiyun.cn/portal/all  (覆盖所有子类)
 反爬策略: 阿里云 WAF + Captcha Pro。
 
 为什么用 CDP Runtime.evaluate：
@@ -10,11 +10,17 @@
   - **唯一稳定方案：让调试 Chrome 自己 fetch，Python 通过 CDP 收 JSON**
   - Chrome 自动处理 TLS / sec-ch-ua / Accept-Encoding / cookie，WAF 全部识别为合法
 
+为什么用 /portal/all 而不是 /portal/category：
+  - /portal/category?categoryCode=ZcyAnnouncement2 只返回 4 种 pathName
+    (询价/公开招标/竞争性谈判/竞争性磋商)，**漏抓 ZcyAnnouncement10007 / 10011 等子类**
+  - /portal/all 是统一搜索接口，覆盖所有大类 × 子类，支持服务端日期过滤
+  - 实测同一日：/portal/category=210 条 vs /portal/all=1112 条（5x 覆盖）
+
 前置（用户操作）：
   1. 启动调试 Chrome：
      chrome.exe --remote-debugging-port=9222 --user-data-dir=C:/chrome-debug
   2. 在该 Chrome 中访问
-     https://b.zhengcaiyun.cn/luban/category?...childrenCode=ZcyAnnouncement2
+     https://b.zhengcaiyun.cn/luban/search?k=&type=1
      如出现滑块手动通过（一般不会，新指纹不被识别）
   3. 抓取期间保持调试 Chrome 运行，页面 tab 不要关
 
@@ -31,22 +37,18 @@ import websocket
 
 from .base import (
     BaseScraper, ScrapeItem, SiteFetchError,
-    is_result_announcement, match_keywords,
+    is_result_announcement, extract_region_from_text,
 )
 
 logger = logging.getLogger(__name__)
 
 CDP_HOST = "http://localhost:9222"
 TARGET_DOMAIN = "b.zhengcaiyun.cn"
-PAGE_URL = (
-    "https://b.zhengcaiyun.cn/luban/category"
-    "?isEnterpriseProvince=true&isState=true"
-    "&parentId=550016&childrenCode=ZcyAnnouncement2"
-)
-API_PATH = "/portal/category"  # 用相对路径让 Chrome 同源请求
+PAGE_URL = "https://b.zhengcaiyun.cn/luban/search?k=&type=1"
+API_PATH = "/portal/all"  # 用相对路径让 Chrome 同源请求
 
 PAGE_SIZE = 50
-MAX_PAGES = 30
+MAX_PAGES = 50  # 1112 条 / 50 ≈ 23 页，留余量
 
 SHANGHAI_TZ = timezone(timedelta(hours=8))
 
@@ -125,13 +127,12 @@ def _cdp_eval(ws_url: str, js_expr: str, timeout: int = 30) -> str:
 # ---- Scraper ----
 
 def _fetch_page_via_chrome(ws_url: str, body: dict) -> dict:
-    """让 Chrome 在页面里 fetch /portal/category，返回 JSON dict。
+    """让 Chrome 在页面里 fetch /portal/all，返回 JSON dict。
 
     返回结构: {"success": true, "result": {"data": {"total": N, "data": [...]}}}
     若被 WAF 拦截（响应含 aliyun_waf_aa），抛 SiteFetchError。
     """
     body_js = json.dumps(body, ensure_ascii=False)
-    # JS 代码：fetch + 把 status/text/isWaf 通过 JSON 返回
     js = (
         "(async () => {\n"
         f"  const r = await fetch({json.dumps(API_PATH)}, {{\n"
@@ -173,9 +174,10 @@ class ZcyScraper(BaseScraper):
     requires_playwright = False
 
     def fetch(self, day: date) -> list[dict]:
-        """通过 CDP 让调试 Chrome 抓取政采云采购公告。
+        """通过 CDP 让调试 Chrome 抓取政采云当日全部公告。
 
-        服务端不支持日期过滤，按 publishDate 客户端过滤 + 早停。
+        /portal/all 支持服务端日期过滤，按 publishDateBegin/End 直接拿当日全量。
+        覆盖所有子类（ZcyAnnouncement1~7, 10007, 10011 等），不漏抓。
         """
         targets = _list_cdp_targets()
         ws_url = _pick_page_ws(targets)
@@ -188,12 +190,17 @@ class ZcyScraper(BaseScraper):
         records: list[dict] = []
         for page_idx in range(MAX_PAGES):
             body = {
+                "keyword": "",
+                "firstCode": "",       # 不限大类，覆盖全部
+                "secondCode": "",      # 不限子类
+                "districtCode": [],
+                "publishDateBegin": day_start_ms,
+                "publishDateEnd": day_end_ms,
                 "pageNo": page_idx + 1,
                 "pageSize": PAGE_SIZE,
-                "categoryCode": "ZcyAnnouncement2",
-                "_t": int(datetime.now().timestamp() * 1000),
-                "isEnterpriseProvince": True,
-                "isState": True,
+                "isTitleSearch": 1,
+                "order": "desc",
+                "leaf": "0",
             }
             try:
                 data = _fetch_page_via_chrome(ws_url, body)
@@ -207,23 +214,14 @@ class ZcyScraper(BaseScraper):
             if not items:
                 break
 
-            for rec in items:
-                pub_ms = rec.get("publishDate")
-                if not isinstance(pub_ms, int):
-                    continue
-                if pub_ms < day_start_ms:
-                    logger.info(
-                        f"zcy 早停于 page {page_idx+1}：累计 {len(records)} 条当日记录"
-                    )
-                    return records
-                if day_start_ms <= pub_ms < day_end_ms:
-                    records.append(rec)
+            records.extend(items)
 
+            total = data.get("result", {}).get("data", {}).get("total", 0)
             logger.info(
-                f"zcy page {page_idx+1}: 累计 {len(records)} 条当日记录"
+                f"zcy page {page_idx+1}: +{len(items)} (累计 {len(records)} / total={total})"
             )
 
-            if len(items) < PAGE_SIZE:
+            if len(records) >= total or len(items) < PAGE_SIZE:
                 break
 
         return records
@@ -231,8 +229,6 @@ class ZcyScraper(BaseScraper):
     def normalize(self, raw: dict) -> Optional[ScrapeItem]:
         title = (raw.get("title") or raw.get("projectName") or "").strip()
         if not title:
-            return None
-        if not match_keywords(title):
             return None
         if is_result_announcement(title):
             return None
@@ -242,7 +238,7 @@ class ZcyScraper(BaseScraper):
         source_url = ""
         if article_id:
             encoded = urllib.parse.quote(article_id, safe="")
-            source_url = f"https://b.zhengcaiyun.cn/luban/detail/{encoded}"
+            source_url = f"https://b.zhengcaiyun.cn/luban/detail?articleId={encoded}"
 
         external_no = f"zcy_{article_id}" if article_id else None
 
@@ -261,19 +257,20 @@ class ZcyScraper(BaseScraper):
                              or raw.get("purchaseName")
                              or "").strip() or None
 
-        # 地区（districtName 示例 "浙江杭州"）
+        # 地区（districtName 示例 "浙江杭州" / "企采区本级"）
+        # 用统一辅助函数提取，districtName 无效时回退到标题
         region_text = (raw.get("districtName") or "").strip()
-        region = None
-        if len(region_text) >= 3:
-            province = region_text[:2] + ("省" if region_text[:2] in
-                                          ("浙江", "江苏", "安徽", "福建", "广东") else "")
-            city = region_text[2:]
-            region = f'["{province}","{city}"]'
+        region = (
+            extract_region_from_text(region_text)
+            or extract_region_from_text(title)
+        )
 
-        # 公告类型 + 采购方式（description）
+        # 公告类型 + 采购方式（pathName 形如 "公示公告 | 采购公告 | 公开招标公告"）
         path_name = (raw.get("pathName") or "").strip()
         proc_method = (raw.get("procurementMethod") or "").strip()
-        desc_parts = [p for p in (path_name, proc_method) if p]
+        desc_parts = [p.strip() for p in path_name.split("|") if p.strip()]
+        if proc_method and proc_method not in desc_parts:
+            desc_parts.append(proc_method)
         description = " / ".join(desc_parts) if desc_parts else None
 
         # 开标时间

@@ -14,7 +14,7 @@ import urllib3
 
 from .base import (
     BaseScraper, ScrapeItem,
-    match_keywords, is_result_announcement, parse_date_safe,
+    is_result_announcement, parse_date_safe,
 )
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -259,8 +259,6 @@ class JhggzyScraper(BaseScraper):
         if not title:
             return None
         if is_result_announcement(title):
-            return None
-        if not match_keywords(title):
             return None
 
         county = raw.get("_county", "")
