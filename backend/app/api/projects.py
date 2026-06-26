@@ -396,7 +396,8 @@ _JSON_LIST_FIELDS = {"manager_ids", "tags", "bid_documents", "result_documents",
 def list_projects(
     keyword: str = Query("", description="搜索关键词"),
     keyword_match: str = Query("fuzzy", description="关键词匹配方式: fuzzy/exact"),
-    status: str = Query("", description="项目状态"),
+    status: str = Query("", description="项目状态（单选，向后兼容）"),
+    statuses: str = Query("", description="项目状态多选，逗号分隔（如 '跟进中,已发公告'）；非空时优先于 status"),
     bidding_type: str = Query("", description="招标类型"),
     region: str = Query("", description="地区"),
     is_prequalification: Optional[bool] = Query(None, description="是否入围标"),
@@ -432,8 +433,18 @@ def list_projects(
             query = query.filter(ProjectInfo.project_name == keyword)
         else:
             query = query.filter(ProjectInfo.project_name.contains(keyword))
-    # 状态
-    if status:
+    # 状态（多选优先；单选向后兼容）
+    if statuses:
+        status_list = [s.strip() for s in statuses.split(",") if s.strip()]
+        status_enums = []
+        for s in status_list:
+            try:
+                status_enums.append(ProjectStatus(s))
+            except ValueError:
+                continue
+        if status_enums:
+            query = query.filter(ProjectInfo.status.in_(status_enums))
+    elif status:
         try:
             status_enum = ProjectStatus(status)
         except ValueError:
@@ -943,3 +954,30 @@ def abandon_project(
     if project.parent_project_id:
         recalc_multi_lot_parent_status(project.parent_project_id, db)
     return {"message": "已放弃该项目"}
+
+
+@router.post("/{project_id}/restore", response_model=dict)
+def restore_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """恢复已放弃项目到跟进中。"""
+    project = db.query(ProjectInfo).filter(ProjectInfo.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if project.is_multi_lot:
+        raise HTTPException(status_code=400, detail="多标段父项目不参与投标流程，请在子标段中操作")
+    if project.status != ProjectStatus.abandoned:
+        raise HTTPException(status_code=400, detail="仅已放弃的项目可恢复")
+
+    project.status = ProjectStatus.following
+    # 清空放弃原因，避免残留误导
+    project.abandon_reason = ""
+    project.abandon_notes = ""
+
+    log_operation(db, current_user.id, "restore", "project", project.id, f"恢复放弃项目到跟进中: {project.project_name}")
+    db.commit()
+    if project.parent_project_id:
+        recalc_multi_lot_parent_status(project.parent_project_id, db)
+    return {"message": "已恢复到跟进中"}

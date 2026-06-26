@@ -47,6 +47,8 @@ FIELD_ALIASES = {
     "是否入围标": "is_prequalification",
     "标签": "tags",
     "备注": "bidding_notes",
+    "是否有投标保证金": "has_deposit",
+    "保证金金额": "deposit_amount",
 }
 
 SYSTEM_PROMPT = (
@@ -70,6 +72,8 @@ SYSTEM_PROMPT = (
     "等任一特征，则填 true；普通招标项目填 false）\n"
     "  - 标签: string[]（如 ['工程','检测']）\n"
     "  - 备注: string\n"
+    "  - 是否有投标保证金: true | false（按招标文件是否要求提交投标保证金判定）\n"
+    "  - 保证金金额: 数字（单位元，不要求保证金时填 null）\n"
     "规则：找不到的字段填 null；日期必须 YYYY-MM-DD；金额只填数字不含单位。"
 )
 

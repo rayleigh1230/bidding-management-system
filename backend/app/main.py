@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text, inspect as sa_inspect
 from datetime import datetime
 
@@ -14,6 +15,46 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# === 只读访客拦截中间件 ===
+# 审核员(reviewer) 角色只能查看，不能做任何写操作（POST/PUT/DELETE/PATCH）。
+# 登录接口除外（否则 reviewer 无法登录）。
+@app.middleware("http")
+async def block_reviewer_writes(request: Request, call_next):
+    method = request.method.upper()
+    # 只读方法直接放行
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+    # 登录接口放行（reviewer 需要登录拿 token）
+    if request.url.path == "/api/auth/login":
+        return await call_next(request)
+
+    # 尝试从 Authorization 头解 token，判断角色
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+        try:
+            from jose import jwt
+            from .core.config import settings
+            payload = jwt.decode(
+                token,
+                settings.JWT_SECRET_KEY,
+                algorithms=[settings.JWT_ALGORITHM],
+                options={"verify_exp": False},  # 过期交给 get_current_user 判断
+            )
+            # role 存进 token 里（login 时写入）— 见 auth.py
+            role = payload.get("role")
+            if role == "reviewer":
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "审核员为只读账号，无操作权限"},
+                )
+        except Exception:
+            # token 无效 / 过期 / 缺失：交给后续 get_current_user 处理
+            pass
+
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -107,6 +148,19 @@ def on_startup():
             conn.commit()
         print("Migration: added abandon_notes column to project_infos")
 
+    # Auto-migrate: add correction_url / correction_notice for 更正/变更/补遗公告关联
+    proj_columns = [col['name'] for col in inspector.get_columns('project_infos')]
+    if 'correction_url' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN correction_url VARCHAR(500) DEFAULT ''"))
+            conn.commit()
+        print("Migration: added correction_url column to project_infos")
+    if 'correction_notice' not in proj_columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE project_infos ADD COLUMN correction_notice VARCHAR(100) DEFAULT ''"))
+            conn.commit()
+        print("Migration: added correction_notice column to project_infos")
+
     # Cleanup orphan scrape runs from previous unclean shutdown
     from sqlalchemy.orm import Session as _Session
     from .models.scrape import ScrapeRun as _ScrapeRun
@@ -184,6 +238,43 @@ def on_startup():
         if upgraded:
             db.commit()
             print(f"Upgraded {upgraded} user(s) to bid_specialist role: {[u.display_name for u in specialists]}")
+
+        # Create reviewer (read-only visitor) accounts if not exist (idempotent)
+        # 预留角色名：当前为只读访客，未来可扩展为审核账号
+        from .core.security import verify_password as _verify_password
+        REVIEWER_ACCOUNTS = [
+            {"username": "101", "password": "888888", "display_name": "曹江"},
+            {"username": "102", "password": "888888", "display_name": "李展"},
+        ]
+        for acc in REVIEWER_ACCOUNTS:
+            existing = db.query(User).filter(User.username == acc["username"]).first()
+            if existing:
+                # 已存在则确保 role/密码/显示名正确（幂等）
+                changed = False
+                role_val = existing.role.value if hasattr(existing.role, 'value') else str(existing.role)
+                if role_val != "reviewer":
+                    existing.role = _UserRole.reviewer
+                    changed = True
+                if existing.display_name != acc["display_name"]:
+                    existing.display_name = acc["display_name"]
+                    changed = True
+                if not _verify_password(acc["password"], existing.password_hash):
+                    existing.password_hash = get_password_hash(acc["password"])
+                    changed = True
+                if changed:
+                    db.commit()
+                    print(f"Updated reviewer account: {acc['username']} / {acc['display_name']}")
+                continue
+            new_user = User(
+                username=acc["username"],
+                password_hash=get_password_hash(acc["password"]),
+                display_name=acc["display_name"],
+                role=_UserRole.reviewer,
+                is_active=True,
+            )
+            db.add(new_user)
+            db.commit()
+            print(f"Created reviewer account: {acc['username']} / {acc['display_name']}")
 
         # Migrate existing abandoned projects: old free-text reason → abandon_notes, reason → 资质不符
         from .models.project import ProjectInfo as _ProjectInfo, ProjectStatus as _ProjectStatus

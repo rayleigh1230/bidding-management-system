@@ -36,6 +36,10 @@ export function abandonProject(id, reason, notes) {
   return request.post(`/projects/${id}/abandon`, { reason, notes })
 }
 
+export function restoreProject(id) {
+  return request.post(`/projects/${id}/restore`)
+}
+
 export function syncCompetitors(id) {
   return request.post(`/projects/${id}/sync-competitors`)
 }

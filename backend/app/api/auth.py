@@ -17,7 +17,10 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=400, detail="用户已被禁用")
 
-    token = create_access_token(data={"sub": str(user.id)})
+    token = create_access_token(data={
+        "sub": str(user.id),
+        "role": user.role.value if hasattr(user.role, "value") else str(user.role),
+    })
     return TokenResponse(access_token=token)
 
 

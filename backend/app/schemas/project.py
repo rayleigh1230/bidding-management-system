@@ -91,6 +91,8 @@ class ProjectResponse(BaseModel):
     external_no: Optional[str] = None
     source: Optional[str] = None
     source_url: Optional[str] = None
+    correction_url: Optional[str] = None
+    correction_notice: Optional[str] = None
     created_by: Optional[int]
     created_at: datetime
     updated_at: datetime

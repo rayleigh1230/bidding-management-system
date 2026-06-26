@@ -63,7 +63,7 @@
       <!-- 左上：项目基本信息 (always visible) -->
       <el-card>
         <template #header><span>项目基本信息</span></template>
-        <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="100px">
+        <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" :disabled="isReadOnly" label-width="100px">
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="招标类型" prop="bidding_type">
@@ -120,6 +120,11 @@
               <el-icon><Link /></el-icon> 点击查看原文公告
             </el-link>
           </el-form-item>
+          <el-form-item v-if="projectForm.correction_url" label="更正公告">
+            <el-link type="danger" :href="projectForm.correction_url" target="_blank" :underline="false">
+              <el-icon><Link /></el-icon> {{ projectForm.correction_notice || '有更正公告' }} — 点击查看
+            </el-link>
+          </el-form-item>
         </el-form>
       </el-card>
 
@@ -144,7 +149,7 @@
             accept=".pdf,.docx,.txt,.jpg,.jpeg,.png"
             style="display: inline-block; margin-right: 8px"
           >
-            <el-button type="primary" :loading="parsing" :icon="Upload">
+            <el-button v-if="!isReadOnly" type="primary" :loading="parsing" :icon="Upload">
               {{ parsing ? '解析中...' : '上传招标文件并解析' }}
             </el-button>
           </el-upload>
@@ -158,11 +163,11 @@
               <el-icon><DocumentIcon /></el-icon>
               <span>{{ doc.filename }}</span>
               <span style="color:#999; font-size:12px">{{ formatFileSize(doc.size) }}</span>
-              <el-button link type="danger" :icon="Delete" @click="handleDeleteDoc(idx)" />
+              <el-button v-if="!isReadOnly" link type="danger" :icon="Delete" @click="handleDeleteDoc(idx)" />
             </div>
           </div>
         </div>
-        <el-form :model="biddingForm" label-width="100px">
+        <el-form :model="biddingForm" :disabled="isReadOnly" label-width="100px">
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="代理单位">
@@ -255,7 +260,7 @@
       <!-- 左下：投标信息 (status >= 准备投标) -->
       <el-card v-if="showBid">
         <template #header><span>投标信息</span></template>
-        <el-form :model="bidForm" label-width="100px">
+        <el-form :model="bidForm" :disabled="isReadOnly" label-width="100px">
           <el-row :gutter="16">
             <el-col :span="12">
               <el-form-item label="投标方式">
@@ -319,7 +324,7 @@
             accept=".pdf,.docx,.txt,.jpg,.jpeg,.png"
             style="display: inline-block; margin-right: 8px"
           >
-            <el-button type="primary" :loading="resultParsing" :icon="Upload">
+            <el-button v-if="!isReadOnly" type="primary" :loading="resultParsing" :icon="Upload">
               {{ resultParsing ? '解析中...' : '上传中标公告并解析' }}
             </el-button>
           </el-upload>
@@ -333,11 +338,11 @@
               <el-icon><DocumentIcon /></el-icon>
               <span>{{ doc.filename }}</span>
               <span style="color:#999; font-size:12px">{{ formatFileSize(doc.size) }}</span>
-              <el-button link type="danger" :icon="Delete" @click="handleDeleteResultDoc(idx)" />
+              <el-button v-if="!isReadOnly" link type="danger" :icon="Delete" @click="handleDeleteResultDoc(idx)" />
             </div>
           </div>
         </div>
-        <el-form :model="resultForm" label-width="100px">
+        <el-form :model="resultForm" :disabled="isReadOnly" label-width="100px">
           <!-- 投标结果 -->
           <el-form-item label="投标结果">
             <el-radio-group :model-value="bidResultType" @change="handleBidResultChange">
@@ -362,7 +367,7 @@
                 <el-tag v-for="oid in comp.org_ids" :key="oid" size="small" :type="isOurOrg(oid) ? '' : 'info'">
                   {{ getOrgName(oid) }}
                 </el-tag>
-                <template v-if="!isOurEntry(comp)">
+                <template v-if="!isOurEntry(comp) && !isReadOnly">
                   <el-button v-if="!comp._editing" size="small" type="primary" link @click="comp._editing = true">编辑</el-button>
                   <el-button v-if="comp._editing" size="small" type="success" link @click="comp._editing = false">完成</el-button>
                 </template>
@@ -382,9 +387,9 @@
               <!-- 中标勾选 -->
               <el-checkbox v-model="comp.is_winning" :disabled="resultForm.is_bid_failed" @change="handleWinningChange(comp)">中标</el-checkbox>
               <!-- 删除按钮（我方条目不可删除） -->
-              <el-button v-if="!isOurEntry(comp)" type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
+              <el-button v-if="!isOurEntry(comp) && !isReadOnly" type="danger" link @click="resultForm.competitors.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
-            <div style="display: flex; gap: 12px; align-items: center">
+            <div v-if="!isReadOnly" style="display: flex; gap: 12px; align-items: center">
               <el-button type="primary" link @click="addCompetitor">+ 添加参标单位</el-button>
               <el-button v-if="projectForm.parent_project_id" type="warning" link @click="doSyncCompetitors">从父项目同步参标单位</el-button>
             </div>
@@ -499,12 +504,15 @@
       <template #header><span style="color: #E6A23C">已放弃</span></template>
       <p style="color: #666; margin: 0">原因：{{ project.abandon_reason || '-' }}</p>
       <p v-if="project.abandon_notes" style="color: #999; margin: 8px 0 0">备注：{{ project.abandon_notes }}</p>
+      <div style="margin-top: 12px">
+        <el-button v-if="!isReadOnly" type="warning" :loading="restoring" @click="handleRestore">恢复跟进</el-button>
+      </div>
     </el-card>
 
     <!-- 操作按钮 -->
     <div v-if="!isAbandoned || isNew" style="margin-top: 16px; display: flex; gap: 8px">
-      <el-button v-if="isNew" type="primary" :loading="saving" @click="handleSave">创建项目</el-button>
-      <template v-if="!isNew">
+      <el-button v-if="isNew && !isReadOnly" type="primary" :loading="saving" @click="handleSave">创建项目</el-button>
+      <template v-if="!isNew && !isReadOnly">
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
         <template v-if="!isMultiLotParent">
           <el-button v-if="isFollowing" type="success" @click="handlePublish">已发公告</el-button>
@@ -547,6 +555,8 @@
           <el-radio-group v-model="abandonReason">
             <el-radio value="资质不符">资质不符</el-radio>
             <el-radio value="价格太低">价格太低</el-radio>
+            <el-radio value="当地限制">当地限制</el-radio>
+            <el-radio value="扣分过多">扣分过多</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="备注">
@@ -571,7 +581,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Upload, Document as DocumentIcon, Link } from '@element-plus/icons-vue'
 import {
   getProject, createProject, updateProject,
-  publishProject, prepareProject, submitProject, abandonProject,
+  publishProject, prepareProject, submitProject, abandonProject, restoreProject,
   getProjects, syncCompetitors, getProjectLots,
   parseBidDocument, getBidDocuments, deleteBidDocument,
   parseResultDocument, getResultDocuments, deleteResultDocument,
@@ -586,6 +596,7 @@ import ManagerSelector from '../../components/ManagerSelector.vue'
 const route = useRoute()
 const router = useRouter()
 const saving = ref(false)
+const restoring = ref(false)
 const showAbandonDialog = ref(false)
 const abandonReason = ref('')
 const abandonNotes = ref('')
@@ -780,6 +791,8 @@ const isNotRegistered = computed(() => project.value.status === '未报名')
 const isRegistered = computed(() => project.value.status === '已报名')
 const isPreparing = computed(() => project.value.status === '准备投标')
 const isAbandoned = computed(() => project.value.status === '已放弃')
+// 审核员只读：所有写操作按钮隐藏（后端中间件也会拦截作为兜底）
+const isReadOnly = computed(() => userStore.user?.role === 'reviewer')
 // 项目基本信息字段（除 bidding_type / parent_project_id / is_multi_lot 外）在已发公告后仍可编辑
 const basicInfoEditable = computed(() => isNew.value || !isAbandoned.value)
 const isMultiLotParent = computed(() => project.value.is_multi_lot === true)
@@ -1210,6 +1223,8 @@ async function loadProject() {
       parent_project_id: data.parent_project_id || null,
       is_multi_lot: data.is_multi_lot || false,
       source_url: data.source_url || '',
+      correction_url: data.correction_url || '',
+      correction_notice: data.correction_notice || '',
     }
     parentProjectName.value = data.parent_project_name || ''
     if (data.parent_project_id) {
@@ -1322,8 +1337,21 @@ function applyParsedFields(fields) {
   // 基本信息
   set(projectForm, 'project_name', fields.project_name)
   set(projectForm, 'bidding_unit_id', fields.bidding_unit_id)
+  // 地区：解析返回结构化数组，非空则覆盖
+  if (Array.isArray(fields.region) && fields.region.length) {
+    projectForm.value.region = fields.region
+  }
   if (fields.bidding_type && (isNew.value || isFollowing.value)) {
     projectForm.value.bidding_type = fields.bidding_type
+  }
+  // 保证金预填：招标文件解析出的「是否要求保证金 + 金额」直接写入投标信息表单，
+  // 让用户推进到「准备投标」时开关已自动打开、金额已填好。
+  // 缴纳日期 / 缴纳状态是公司内部信息，不在招标文件中，留给用户手工填。
+  if (fields.has_deposit === true || fields.has_deposit === false) {
+    bidForm.value.has_deposit = fields.has_deposit
+  }
+  if (fields.deposit_amount != null && Number(fields.deposit_amount) > 0) {
+    bidForm.value.deposit_amount = Number(fields.deposit_amount)
   }
 
   // 招标信息
@@ -1514,6 +1542,10 @@ function collectSaveData() {
     manager_ids: projectForm.value.manager_ids,
     // 投标专员始终发送：即使招标卡片未显示（跟进中状态），保存时也要写入专员
     bid_specialist_id: biddingForm.value.bid_specialist_id,
+    // 保证金开关 + 金额始终发送：让招标文件解析设置的值在状态推进过程中持久化
+    // （投标卡片在「准备投标」之前不可见，正常 Object.assign 不会带上这两个字段）
+    has_deposit: bidForm.value.has_deposit,
+    deposit_amount: bidForm.value.deposit_amount,
   }
   if (showBidding.value) {
     Object.assign(data, { ...biddingForm.value, tags: biddingForm.value.tags, bid_documents: bidDocuments.value })
@@ -1602,9 +1634,46 @@ async function handlePrepare() {
   }
 }
 
+// 提交投标前必填字段校验。返回 true=通过，false=已提示并拦截。
+function validateBeforeSubmit() {
+  // 规则1：所属地区 + 项目负责人必填
+  if (!projectForm.value.region || projectForm.value.region.length === 0) {
+    ElMessage.warning('请填写所属地区后再提交投标')
+    return false
+  }
+  if (!projectForm.value.manager_ids || projectForm.value.manager_ids.length === 0) {
+    ElMessage.warning('请填写项目负责人后再提交投标')
+    return false
+  }
+  // 规则2：投标方式非「独立」时，合作单位必填
+  if (bidForm.value.bid_method && bidForm.value.bid_method !== '独立') {
+    if (!bidForm.value.partner_ids || bidForm.value.partner_ids.length === 0) {
+      ElMessage.warning(`投标方式为「${bidForm.value.bid_method}」时，必须填写合作单位`)
+      return false
+    }
+  }
+  // 规则3：开启保证金后，金额 / 缴纳日期 / 缴纳状态必填
+  if (bidForm.value.has_deposit) {
+    if (!bidForm.value.deposit_amount || Number(bidForm.value.deposit_amount) <= 0) {
+      ElMessage.warning('已开启保证金，请填写保证金金额')
+      return false
+    }
+    if (!bidForm.value.deposit_date) {
+      ElMessage.warning('已开启保证金，请选择保证金缴纳日期')
+      return false
+    }
+    if (!bidForm.value.deposit_status || bidForm.value.deposit_status === '无') {
+      ElMessage.warning('已开启保证金，请选择保证金缴纳状态（未缴纳/已缴纳）')
+      return false
+    }
+  }
+  return true
+}
+
 async function handleSubmit() {
   try {
     await ElMessageBox.confirm('确认提交投标？将自动保存当前信息。', '确认')
+    if (!validateBeforeSubmit()) return
     saving.value = true
     await ensureSpecialistBeforeSave()
     const data = collectSaveData()
@@ -1639,6 +1708,28 @@ async function handleAbandon() {
     await loadProject()
   } catch (err) {
     ElMessage.error(err.response?.data?.detail || '操作失败')
+  }
+}
+
+async function handleRestore() {
+  try {
+    await ElMessageBox.confirm('确认恢复该项目到「跟进中」？放弃原因和备注将被清空。', '恢复确认', {
+      confirmButtonText: '确认恢复',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  restoring.value = true
+  try {
+    await restoreProject(currentProjectId.value)
+    ElMessage.success('已恢复到跟进中')
+    await loadProject()
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '操作失败')
+  } finally {
+    restoring.value = false
   }
 }
 

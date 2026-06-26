@@ -21,6 +21,7 @@ from ..services.document_parser import DocumentParseError, get_parser
 from ..services.logger import log_operation
 from ..services.org_matcher import match_or_create_org as _match_or_create_org
 from ..services.org_matcher import match_or_create_platform as _match_or_create_platform
+from ..scrapers.base import extract_region_from_text
 
 router = APIRouter(prefix="/api/documents", tags=["文档解析"])
 
@@ -162,10 +163,27 @@ def _build_bidding_response(
     elif not isinstance(is_prequal, bool):
         is_prequal = None
 
+    # 保证金信息归一化
+    has_deposit_raw = parsed.get("has_deposit")
+    if isinstance(has_deposit_raw, str):
+        has_deposit = has_deposit_raw.strip() in ("true", "True", "是", "1", "yes")
+    elif isinstance(has_deposit_raw, bool):
+        has_deposit = has_deposit_raw
+    else:
+        has_deposit = None
+    deposit_amount = _to_float(parsed.get("deposit_amount"))
+
+    # region_text（中文字符串）→ 结构化数组
+    region_json = extract_region_from_text(parsed.get("region_text") or "")
+    region_array = json.loads(region_json) if region_json else None
+
     fields = {
         "project_name": parsed.get("project_name"),
         "bidding_type": bidding_type,
         "region_text": parsed.get("region_text"),
+        "region": region_array,
+        "has_deposit": has_deposit,
+        "deposit_amount": deposit_amount,
         "bidding_unit_id": bidding_unit_id,
         "bidding_unit_name": bidding_unit_name or parsed.get("bidding_unit_name"),
         "agency_id": agency_id,

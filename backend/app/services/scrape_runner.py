@@ -12,7 +12,7 @@
 """
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from ..core.config import settings
 from ..core.database import SessionLocal
@@ -20,13 +20,19 @@ from ..models.project import ProjectInfo, ProjectStatus
 from ..models.scrape import ScrapeRun, ScrapeItemLog
 from ..models.user import User
 from ..scrapers import ScraperRegistry
-from ..scrapers.base import ScrapeItem, SiteFetchError, classify_by_keyword
+from ..scrapers.base import (
+    ScrapeItem, SiteFetchError, classify_by_keyword,
+    is_correction_announcement, strip_correction_keyword, derive_correction_notice,
+)
 from .org_matcher import match_or_create_org, match_or_create_platform
 
 logger = logging.getLogger(__name__)
 
 # 这类 scraper 整分类抓取、不经关键词/LLM 筛选（中介超市等）
 SKIP_CLASSIFY_SCRAPERS = {"jhzjcs"}
+
+# 每次抓取回溯的天数（含今天）。跨日重复由 _create_one 的 external_no 去重兜底。
+LOOKBACK_DAYS = 3
 
 
 def run_scraper(run_id: int, user_id: int):
@@ -42,15 +48,33 @@ def run_scraper(run_id: int, user_id: int):
 
     try:
         scrapers = ScraperRegistry.all()
-        day = date.today()
-        logger.info(f"开始抓取 run_id={run_id}，共 {len(scrapers)} 个站点")
+        # 抓取最近 LOOKBACK_DAYS 天（含今天）— 每个站点逐日 fetch 后合并，
+        # 跨日重复由 _create_one 的 external_no 去重兜底。
+        today = date.today()
+        days = [today - timedelta(days=i) for i in range(LOOKBACK_DAYS)]
+        logger.info(f"开始抓取 run_id={run_id}，共 {len(scrapers)} 个站点，回溯 {LOOKBACK_DAYS} 天 {days}")
 
         for scraper in scrapers:
             site_stat = {"fetched": 0, "created": 0, "skipped": 0, "failed": 0}
             try:
-                raw_list = scraper.fetch_with_retry(day)
+                raw_list = []
+                day_errors = []
+                # SKIP_CLASSIFY_SCRAPERS（如 jhzjcs）整分类抓全量、不按日过滤，
+                # 只需调一次即可覆盖回溯窗口内的全部新公告。
+                fetch_days = [today] if scraper.name in SKIP_CLASSIFY_SCRAPERS else days
+                for d in fetch_days:
+                    try:
+                        raw_list.extend(scraper.fetch_with_retry(d))
+                    except SiteFetchError as e:
+                        day_errors.append(f"{d}: {e}")
+                # 全部天数都失败才记站点级错误；部分成功则继续处理拿到的数据
+                if len(day_errors) == len(fetch_days):
+                    raise SiteFetchError(f"{scraper.name} 连续 {len(fetch_days)} 次抓取全部失败: " + " | ".join(day_errors))
+                elif day_errors:
+                    logger.warning(f"[{scraper.name}] 部分天数失败: {day_errors}")
+
                 site_stat["fetched"] = len(raw_list)
-                logger.info(f"[{scraper.name}] 抓取到 {len(raw_list)} 条")
+                logger.info(f"[{scraper.name}] 抓取到 {len(raw_list)} 条（{LOOKBACK_DAYS} 天合计）")
 
                 skip_classify = scraper.name in SKIP_CLASSIFY_SCRAPERS
 
@@ -114,6 +138,22 @@ def _classify_one(
     if item is None:
         return  # normalize 内部过滤（is_result_announcement / region 等）
 
+    # 更正/变更/补遗/澄清/延期类后续公告：尝试关联到原项目（更新 correction_url/notice）
+    # 找不到原项目才 skip。这类公告 external_no 与原公告不同，单纯去重拦不住。
+    if is_correction_announcement(item.project_name):
+        attached = _attach_correction_to_original(db, run, item, scraper.name)
+        if attached:
+            site_stat["created"] += 1  # 视作一次成功处理（更新到原项目）
+        else:
+            _log_item(
+                db, run, item, scraper.name, "skipped",
+                skip_reason="更正公告未匹配到原项目",
+            )
+            site_stat["skipped"] += 1
+            run.skipped_count += 1
+            run.total_count += 1
+        return
+
     if skip_classify:
         white_items.append(item)
         return
@@ -133,7 +173,54 @@ def _classify_one(
         run.total_count += 1
 
 
-# === 阶段 2：grey 批量 LLM 精筛 ===
+# === 更正公告关联原项目 ===
+
+def _attach_correction_to_original(db, run, item: ScrapeItem, source: str) -> bool:
+    """更正公告关联到原项目：更新 correction_url + correction_notice。
+
+    匹配策略：剥离更正关键词后得到核心名，与现有项目名双向 LIKE 模糊匹配。
+    命中多个时取 created_at 最新。找不到返回 False。
+    """
+    core = strip_correction_keyword(item.project_name)
+    if len(core) < 6:
+        # 太短的核心名容易误匹配，放弃
+        logger.info(f"[更正关联] 核心名过短跳过: {item.project_name}")
+        return False
+
+    notice = derive_correction_notice(item.project_name)
+    url = item.source_url or ""
+
+    # 双向匹配：原项目名包含核心名 OR 核心名包含原项目名
+    # SQL 层先用核心名做正向 LIKE 粗查（拿候选），Python 层做双向精筛
+    candidates = (
+        db.query(ProjectInfo)
+        .filter(ProjectInfo.project_name.like(f"%{core}%"))
+        .order_by(ProjectInfo.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    matched = [p for p in candidates if core in p.project_name or p.project_name in core]
+    if not matched:
+        logger.info(f"[更正关联] 未匹配到原项目: {item.project_name} (核心={core})")
+        return False
+
+    target = matched[0]
+    # 同一公告可能多次更正，覆盖为最新
+    target.correction_url = url
+    target.correction_notice = notice
+    db.commit()
+    logger.info(
+        f"[更正关联] 关联到 project_id={target.id} "
+        f"notice={notice} url={url[:60]}"
+    )
+    _log_item(
+        db, run, item, source, "created",
+        project_id=target.id,
+        skip_reason=f"更正公告已关联到原项目 #{target.id}",
+    )
+    run.created_count += 1
+    run.total_count += 1
+    return True
 
 def _process_grey_batch(db, run, scraper, site_stat, grey_items: list):
     """grey_items 批量并发 LLM 分类。

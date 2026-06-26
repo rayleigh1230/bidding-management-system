@@ -89,6 +89,9 @@ class ProjectInfo(Base):
     external_no: Mapped[str] = mapped_column(String(100), nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual")
     source_url: Mapped[str] = mapped_column(String(500), default="")
+    # 更正/变更/补遗类后续公告：关联到原项目，与原公告 source_url 平行展示
+    correction_url: Mapped[str] = mapped_column(String(500), default="")
+    correction_notice: Mapped[str] = mapped_column(String(100), default="")
 
     # ---- Section 2: 招标信息 (status >= 已发公告) ----
     agency_id: Mapped[int] = mapped_column(Integer, ForeignKey("organizations.id"), nullable=True)

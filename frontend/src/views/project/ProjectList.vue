@@ -1,18 +1,20 @@
 <template>
   <div>
-    <!-- 快捷筛选按钮 -->
+    <!-- 快捷筛选按钮（多选 toggle） -->
     <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap">
-      <el-button :type="activeStatus === '' ? 'primary' : ''" @click="setStatus('')">全部</el-button>
-      <el-button :type="activeStatus === '跟进中' ? 'primary' : ''" @click="setStatus('跟进中')">跟进中</el-button>
-      <el-button :type="activeStatus === '已发公告' ? 'primary' : ''" @click="setStatus('已发公告')">已发公告</el-button>
-      <el-button :type="activeStatus === '未报名' ? 'primary' : ''" @click="setStatus('未报名')">未报名</el-button>
-      <el-button :type="activeStatus === '已报名' ? 'primary' : ''" @click="setStatus('已报名')">已报名</el-button>
-      <el-button :type="activeStatus === '准备投标' ? 'primary' : ''" @click="setStatus('准备投标')">准备投标</el-button>
-      <el-button :type="activeStatus === '已投标' ? 'primary' : ''" @click="setStatus('已投标')">已投标</el-button>
-      <el-button :type="activeStatus === '已中标' ? 'success' : ''" @click="setStatus('已中标')">已中标</el-button>
-      <el-button :type="activeStatus === '未中标' ? 'danger' : ''" @click="setStatus('未中标')">未中标</el-button>
-      <el-button :type="activeStatus === '已流标' ? 'warning' : ''" @click="setStatus('已流标')">已流标</el-button>
-      <el-button :type="activeStatus === '已放弃' ? 'info' : ''" @click="setStatus('已放弃')">已放弃</el-button>
+      <el-button :type="isAllSelected ? 'info' : 'primary'" @click="toggleSelectAll">
+        {{ isAllSelected ? '全取消' : '全选' }}
+      </el-button>
+      <el-button :type="activeStatus.includes('跟进中') ? 'primary' : ''" @click="toggleStatus('跟进中')">跟进中</el-button>
+      <el-button :type="activeStatus.includes('已发公告') ? 'primary' : ''" @click="toggleStatus('已发公告')">已发公告</el-button>
+      <el-button :type="activeStatus.includes('未报名') ? 'primary' : ''" @click="toggleStatus('未报名')">未报名</el-button>
+      <el-button :type="activeStatus.includes('已报名') ? 'primary' : ''" @click="toggleStatus('已报名')">已报名</el-button>
+      <el-button :type="activeStatus.includes('准备投标') ? 'primary' : ''" @click="toggleStatus('准备投标')">准备投标</el-button>
+      <el-button :type="activeStatus.includes('已投标') ? 'primary' : ''" @click="toggleStatus('已投标')">已投标</el-button>
+      <el-button :type="activeStatus.includes('已中标') ? 'success' : ''" @click="toggleStatus('已中标')">已中标</el-button>
+      <el-button :type="activeStatus.includes('未中标') ? 'danger' : ''" @click="toggleStatus('未中标')">未中标</el-button>
+      <el-button :type="activeStatus.includes('已流标') ? 'warning' : ''" @click="toggleStatus('已流标')">已流标</el-button>
+      <el-button :type="activeStatus.includes('已放弃') ? 'info' : ''" @click="toggleStatus('已放弃')">已放弃</el-button>
       <el-button
         v-if="userStore.user?.role === 'bid_specialist'"
         :type="myProjects ? 'warning' : ''"
@@ -59,7 +61,7 @@
             <el-button size="small" @click="resetColumns">恢复默认</el-button>
           </div>
         </el-popover>
-        <el-button type="primary" @click="$router.push('/projects/new')"><el-icon><Plus /></el-icon> 新增项目</el-button>
+        <el-button v-if="userStore.user?.role !== 'reviewer'" type="primary" @click="$router.push('/projects/new')"><el-icon><Plus /></el-icon> 新增项目</el-button>
         <el-button
           v-if="['admin', 'bid_specialist'].includes(userStore.user?.role)"
           type="success"
@@ -194,6 +196,9 @@
           <template #default="{ row }">
             <el-link type="primary" @click="goToDetail(row.id)">{{ row.project_name }}</el-link>
             <el-tag v-if="row.is_multi_lot" size="small" type="warning" style="margin-left: 4px">多标段</el-tag>
+            <el-tag v-if="row.correction_url" size="small" type="danger" style="margin-left: 4px">
+              {{ row.correction_notice || '有更正' }}
+            </el-tag>
           </template>
         </el-table-column>
         <!-- 状态 -->
@@ -393,8 +398,9 @@ function saveColumnConfig(status, keys) {
 }
 
 // 用 watch 确保任何变化都保存（比 @change 更可靠）
+// 多选模式下统一使用 '' 单一全局 key，不再按状态分 tab
 watch(selectedColumnKeys, (newKeys) => {
-  saveColumnConfig(activeStatus.value, newKeys)
+  saveColumnConfig('', newKeys)
 }, { deep: true })
 
 function resetColumns() {
@@ -414,8 +420,34 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = ref(15)
 const total = ref(0)
-const activeStatus = ref('')
-const myProjects = ref(false)  // "我的项目"快捷筛选：投标专员=当前用户 OR 未指派
+// 默认勾选 9 个状态（不含已放弃）
+const DEFAULT_STATUSES = ['跟进中', '已发公告', '未报名', '已报名', '准备投标', '已投标', '已中标', '未中标', '已流标']
+// 全部 10 个状态（含已放弃）
+const ALL_STATUSES = [...DEFAULT_STATUSES, '已放弃']
+
+const activeStatus = ref([...DEFAULT_STATUSES])
+const myProjects = ref(userStore.user?.role === 'bid_specialist')  // 投标专员默认勾选"我的项目"
+
+const isAllSelected = computed(() => activeStatus.value.length === ALL_STATUSES.length)
+
+function toggleSelectAll() {
+  activeStatus.value = isAllSelected.value ? [] : [...ALL_STATUSES]
+  page.value = 1
+  selectedColumnKeys.value = loadColumnConfig('')
+  loadData()
+}
+
+function toggleStatus(status) {
+  const idx = activeStatus.value.indexOf(status)
+  if (idx >= 0) {
+    activeStatus.value.splice(idx, 1)
+  } else {
+    activeStatus.value.push(status)
+  }
+  page.value = 1
+  selectedColumnKeys.value = loadColumnConfig('')
+  loadData()
+}
 
 // 进入项目详情前保存当前页码 + 筛选状态，返回时恢复；点侧边栏会清除
 function goToDetail(id) {
@@ -566,24 +598,21 @@ function formatRegion(r) {
   } catch { return r }
 }
 
-function setStatus(status) {
-  activeStatus.value = status
-  filters.status = status
-  page.value = 1
-  selectedColumnKeys.value = loadColumnConfig(status)
-  loadData()
-}
-
 async function loadData() {
   loading.value = true
   try {
+    // 未勾选任何状态 → 直接置空，不发请求
+    if (activeStatus.value.length === 0) {
+      tableData.value = []
+      total.value = 0
+      return
+    }
     const params = { page: page.value, page_size: pageSize.value }
     // 基本筛选
     if (filters.keyword) { params.keyword = filters.keyword; params.keyword_match = keywordMatch.value }
-    if (filters.status) params.status = filters.status
+    // 状态多选（逗号分隔传给后端）
+    params.statuses = activeStatus.value.join(',')
     if (filters.bidding_type) params.bidding_type = filters.bidding_type
-    // "全部"（无状态筛选）时排除已放弃项目，已放弃项目单独看
-    if (!filters.status) params.exclude_abandoned = true
     // 高级筛选
     if (filters.region && filters.region.length > 0) {
       params.region = filters.region[filters.region.length - 1]
@@ -602,11 +631,11 @@ async function loadData() {
     if (filters.budget_max != null) params.budget_max = filters.budget_max
     if (filters.winning_amount_min != null) params.winning_amount_min = filters.winning_amount_min
     if (filters.winning_amount_max != null) params.winning_amount_max = filters.winning_amount_max
-    // "我的项目"快捷筛选：专员=当前用户 OR 未指派，排除已放弃
+    // "我的项目"快捷筛选：专员=当前用户 OR 未指派
+    // 注意：不再自动 exclude_abandoned —— 未勾选已放弃 = 它不在 activeStatus 里，天然过滤
     if (myProjects.value && userStore.user?.id) {
       params.bid_specialist_id = userStore.user.id
       params.include_unassigned_specialist = true
-      params.exclude_abandoned = true
     }
 
     saveAdvancedState()
@@ -772,13 +801,23 @@ onMounted(() => {
   const savedState = consumeListState()
   if (savedState) {
     page.value = savedState.page || 1
-    activeStatus.value = savedState.activeStatus || ''
-    filters.status = savedState.activeStatus || ''
+    // 兼容旧 string 格式 / 新数组格式
+    const saved = savedState.activeStatus
+    if (Array.isArray(saved)) {
+      activeStatus.value = saved
+    } else if (typeof saved === 'string' && saved) {
+      // 旧单选格式：单个状态 → 包装成数组
+      activeStatus.value = [saved]
+    } else {
+      activeStatus.value = [...DEFAULT_STATUSES]
+    }
     filters.keyword = savedState.keyword || ''
     filters.bidding_type = savedState.bidding_type || ''
-    myProjects.value = savedState.myProjects || false
-    // activeStatus 变了，列配置的 storage key 也变了，需要重新加载
-    selectedColumnKeys.value = loadColumnConfig(activeStatus.value)
+    // bid_specialist 默认 true；若有保存值则用保存值
+    if (savedState.myProjects !== undefined) {
+      myProjects.value = !!savedState.myProjects
+    }
+    selectedColumnKeys.value = loadColumnConfig('')
   }
   loadData()
   // 延迟到 nextTick 开启 watch，让本轮筛选恢复触发的 watch 被跳过（不重置页码）

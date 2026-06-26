@@ -10,7 +10,9 @@
       <el-table-column prop="display_name" label="显示名" width="120" />
       <el-table-column prop="role" label="角色" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.role === 'admin' ? 'danger' : 'info'">{{ row.role === 'admin' ? '管理员' : '普通用户' }}</el-tag>
+          <el-tag :type="row.role === 'admin' ? 'danger' : row.role === 'reviewer' ? 'warning' : row.role === 'bid_specialist' ? 'success' : 'info'">
+            {{ row.role === 'admin' ? '管理员' : row.role === 'reviewer' ? '审核员' : row.role === 'bid_specialist' ? '投标专员' : '普通用户' }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="phone" label="电话" width="140" />
@@ -43,6 +45,8 @@
         <el-form-item label="角色">
           <el-select v-model="form.role">
             <el-option label="管理员" value="admin" />
+            <el-option label="投标专员" value="bid_specialist" />
+            <el-option label="审核员（只读）" value="reviewer" />
             <el-option label="普通用户" value="user" />
           </el-select>
         </el-form-item>
